@@ -6,7 +6,8 @@ if (NOT DEFINED camel_INSTALL_CMAKEDIR)
     CACHE STRING "Path to camel cmake files")
 endif ()
 
-install(TARGETS camel EXPORT camel_TARGETS
+# TODO: consider this hot fix
+install(TARGETS camel biosoup thread_pool fmt ram EXPORT camel_TARGETS
         RUNTIME COMPONENT camel_Runtime
         LIBRARY COMPONENT camel_Runtime
         NAMELINK_COMPONENT camel_Development
@@ -23,7 +24,7 @@ else ()
   set(type static)
 endif ()
 
-install(EXPORT camel_TARGETS
+install(EXPORT camel_TARGETS 
         DESTINATION "${camel_INSTALL_CMAKEDIR}"
         NAMESPACE camel
         FILE camel-${type}-targets.cmake
@@ -34,7 +35,7 @@ write_basic_package_version_file(
   COMPATIBILITY SameMajorVersion)
 
 install(FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/camelConfigVersion.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/camelConfig.cmake"
         "${CMAKE_CURRENT_BINARY_DIR}/camelConfigVersion.cmake"
         DESTINATION "${camel_INSTALL_CMAKEDIR}"
         COMPONENT camel_Development)
