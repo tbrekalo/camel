@@ -15,8 +15,6 @@ struct Coverage {
   std::uint16_t mis;
 };
 
-
-
 }  // namespace camel
 
 #endif /* CAMEL_CAMEL_H_ */

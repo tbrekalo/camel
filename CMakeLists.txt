@@ -18,6 +18,7 @@ option(CAMEL_BUILD_SHARED_LIBS "Build camel and it's dependencies as shared lib"
 option(CAMEL_BUILD_TESTS "Build tests" ${CAMEL_MAIN_PROJECT})
 option(CAMEL_INCLUDE_PACKING "Inclue camel packaging info" ${CAMEL_MAIN_PROJECT})
 option(CAMEL_BUILD_EXE "Build camel executable" OFF)
+option(CAMEL_DEVEL_OPTS "Enable options used for development" OFF)
 
 if (NOT DEFINED CMAKE_CXX_VISIBILITY_PRESET AND
     NOT DEFINED CMAKE_VISIBILITY_INLINES_HIDDEN AND NOT CAMEL_MAIN_PROJECT)
@@ -82,7 +83,7 @@ FetchContent_MakeAvailable(biosoup edlib fmt thread_pool ram)
 
 # create main target
 set(camel_SOURCES
-  ${PROJECT_SOURCE_DIR}/src/camel.cc)
+  ${PROJECT_SOURCE_DIR}/src/camel/io.cc)
 
 add_library(camel ${camel_SOURCES})
 add_library(${PROJECT_NAME}::camel ALIAS camel)
@@ -97,6 +98,15 @@ target_link_libraries(camel
   PRIVATE
     edlib fmt ram)
 
+# enable development options
+if (CAMEL_DEVEL_OPTS)
+  add_compile_options(
+    $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>
+    $<$<CONFIG:Debug,RelWithDebInfo>:-fno-omit-frame-pointer>)
+  add_link_options(
+    $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>)
+endif ()
+
 # generate export header and attach it to somelib
 generate_export_header(camel EXPORT_FILE_NAME include/camel/export.h)
 target_compile_definitions(camel PUBLIC
@@ -110,8 +120,7 @@ if (CAMEL_BUILD_EXE)
     FetchContent_Declare(
       bioparser
       GIT_REPOSITORY https://github.com/rvaser/bioparser
-      GIT_TAG 3.0.15
-    ) 
+      GIT_TAG 3.0.15) 
   
     FetchContent_MakeAvailable(bioparser)
   endif()
