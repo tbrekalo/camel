@@ -3,15 +3,20 @@ project(camel VERSION 0.1.0
               LANGUAGES C CXX
               DESCRIPTION "Snp detection tool")
 
-# includes
-include(cmake/Warnings.cmake)
-include(GenerateExportHeader)
-include(FetchContent)
-
 # test if camel is main project
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   set(CAMEL_MAIN_PROJECT TRUE)
 endif ()
+
+# output dirs
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+
+# includes
+include(cmake/Warnings.cmake)
+include(GenerateExportHeader)
+include(FetchContent)
 
 # options
 option(CAMEL_BUILD_SHARED_LIBS "Build camel and it's dependencies as shared lib" OFF)
@@ -32,6 +37,16 @@ if (CAMEL_BUILD_SHARED_LIBS)
 endif ()
 
 # lib dependencies
+find_package(bioparser 3.0.15 QUIET)
+if (NOT bioparser_FOUND)
+  FetchContent_Declare(
+    bioparser
+    GIT_REPOSITORY https://github.com/rvaser/bioparser
+    GIT_TAG 3.0.15) 
+
+  FetchContent_MakeAvailable(bioparser)
+endif()
+
 find_package(biosoup 0.10.0 QUIET)
 if(NOT biosoup_FOUND)
   FetchContent_Declare(
@@ -78,7 +93,6 @@ if (NOT thread_pool_FOUND)
     GIT_TAG v4.0.0)
 endif ()
 
-
 FetchContent_MakeAvailable(biosoup edlib fmt thread_pool ram)
 
 # create main target
@@ -96,7 +110,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    edlib fmt ram)
+    bioparser edlib fmt ram)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
@@ -115,16 +129,6 @@ target_include_directories(camel PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>")
 
 if (CAMEL_BUILD_EXE)
-  find_package(bioparser 3.0.15 QUIET)
-  if (NOT bioparser_FOUND)
-    FetchContent_Declare(
-      bioparser
-      GIT_REPOSITORY https://github.com/rvaser/bioparser
-      GIT_TAG 3.0.15) 
-  
-    FetchContent_MakeAvailable(bioparser)
-  endif()
-
   find_package(cxxopts 3 QUIET)
   if (NOT cxxopts_FOUND)
     FetchContent_Declare(
@@ -132,13 +136,13 @@ if (CAMEL_BUILD_EXE)
       GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
       GIT_TAG v3.0.0)
   endif ()
-  
+ 
   FetchContent_MakeAvailable(bioparser cxxopts)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe 
     PRIVATE 
-      bioparser camel cxxopts fmt)
+      camel cxxopts fmt)
 endif ()
 
 # include packaging
