@@ -71,8 +71,8 @@ auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
 
   std::transform(
       paths.cbegin(), paths.cend(), std::back_inserter(parse_futures),
-      [tp = thread_pool](std::filesystem::path const& path) {
-        return tp->Submit(
+      [&thread_pool](std::filesystem::path const& path) {
+        return thread_pool->Submit(
             [](std::filesystem::path const& p) { return LoadSequences(p); },
             path);
       });

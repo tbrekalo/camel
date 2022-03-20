@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "biosoup/timer.hpp"
 #include "camel/io.h"
+#include "camel/mapping.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
 #include "thread_pool/thread_pool.hpp"
@@ -27,7 +29,7 @@ auto main(int argc, char** argv) -> int {
 
   auto thread_pool = std::make_shared<thread_pool::ThreadPool>(
       result["threads"].as<std::uint32_t>());
-
+  
   auto paths = std::vector<std::filesystem::path>();
   auto paths_strs = result["paths"].as<std::vector<std::string>>();
   std::transform(std::make_move_iterator(paths_strs.begin()),
@@ -37,8 +39,14 @@ auto main(int argc, char** argv) -> int {
                    return std::filesystem::path(std::move(path_str));
                  });
 
-  auto reads = camel::LoadSequences(thread_pool, paths);
-  fmt::print(stderr, "[camel] loaded {} reads\n", reads.size());
+  auto timer = biosoup::Timer();
+
+  timer.Start();
+  auto const reads = camel::LoadSequences(thread_pool, paths);
+  fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
+             reads.size());
+
+  auto const ovlps = camel::FindOverlaps(thread_pool, reads, camel::MapCfg{});
 
   return EXIT_SUCCESS;
 }
