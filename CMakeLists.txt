@@ -97,6 +97,10 @@ FetchContent_MakeAvailable(biosoup edlib fmt thread_pool ram)
 
 # create main target
 set(camel_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
+
+  ${PROJECT_SOURCE_DIR}/src/camel/coverage.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc
   ${PROJECT_SOURCE_DIR}/src/camel/io.cc)
 
 add_library(camel ${camel_SOURCES})
@@ -104,7 +108,9 @@ add_library(${PROJECT_NAME}::camel ALIAS camel)
 set_target_properties(camel PROPERTIES
                       VERSION ${camel_VERSION}
                       SOVERSION ${camel_VERSION_MAJOR})
-target_include_directories(camel PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+target_include_directories(camel 
+  PUBLIC 
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
 target_compile_features(camel PUBLIC cxx_std_17)
 target_link_libraries(camel
   PUBLIC
