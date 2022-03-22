@@ -6,6 +6,7 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
+#include "camel/export.h"
 #include "thread_pool/thread_pool.hpp"
 
 namespace camel {
@@ -16,10 +17,9 @@ struct MapCfg {
   double filter_p = 0.01;
 };
 
-[[nodiscard]] auto FindOverlaps(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-    MapCfg map_cfg) -> std::vector<std::vector<biosoup::Overlap>>;
+[[nodiscard]] CAMEL_EXPORT auto FindOverlaps(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs) -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel
 

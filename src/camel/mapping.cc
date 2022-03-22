@@ -14,9 +14,9 @@ static constexpr std::size_t kMinimizeBatchCap = 1UL << 32UL;
 static constexpr std::size_t kMapBatchCap = 1UL << 30UL;
 
 auto FindOverlaps(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-    MapCfg map_cfg) -> std::vector<std::vector<biosoup::Overlap>> {
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)
+    -> std::vector<std::vector<biosoup::Overlap>> {
   auto dst = std::vector<std::vector<biosoup::Overlap>>(
       seqs.size(), std::vector<biosoup::Overlap>());
 
@@ -97,13 +97,11 @@ auto FindOverlaps(
 
     minimize_batch_begin = minimize_batch_end;
   }
-  
+
   auto const n_ovlps = std::accumulate(
       dst.cbegin(), dst.cend(), 0UL,
       [](std::size_t const init, std::vector<biosoup::Overlap> const& vec)
-          -> std::size_t { 
-            return init + vec.size(); 
-          });
+          -> std::size_t { return init + vec.size(); });
 
   fmt::print(stderr, "[camel::FindOverlaps] found {} overlaps\n", n_ovlps);
   return dst;
