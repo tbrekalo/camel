@@ -11,6 +11,7 @@
 #include "biosoup/timer.hpp"
 #include "camel/io.h"
 #include "camel/mapping.h"
+#include "camel/coverage.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
 #include "thread_pool/thread_pool.hpp"
@@ -46,7 +47,8 @@ auto main(int argc, char** argv) -> int {
   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
              reads.size());
 
-  auto const ovlps = camel::FindOverlaps(thread_pool, reads, camel::MapCfg{});
+  auto const coverage =
+      camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads);
 
   return EXIT_SUCCESS;
 }
