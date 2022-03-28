@@ -43,18 +43,32 @@ if (NOT bioparser_FOUND)
     bioparser
     GIT_REPOSITORY https://github.com/rvaser/bioparser
     GIT_TAG 3.0.15) 
-
-  FetchContent_MakeAvailable(bioparser)
 endif()
 
 find_package(biosoup 0.10.0 QUIET)
-if(NOT biosoup_FOUND)
+if (NOT biosoup_FOUND)
   FetchContent_Declare(
     biosoup
     GIT_REPOSITORY https://github.com/rvaser/biosoup
     GIT_TAG 0.10.0)
+endif ()
 
-  FetchContent_MakeAvailable(biosoup)
+find_package(cereal 1.3 QUIET)
+if (NOT cereal_FOUND)
+    FetchContent_Declare(
+            cereal
+            GIT_REPOSITORY https://github.com/USCiLab/cereal
+            GIT_TAG v1.3.2)
+
+    FetchContent_GetProperties(cereal)
+    if (NOT cereal_POPULATED)
+        FetchContent_Populate(cereal)
+        add_subdirectory(
+                ${cereal_SOURCE_DIR}
+                ${cereal_BINARY_DIR}
+                EXCLUDE_FROM_ALL)
+        add_library(cereal::cereal ALIAS cereal)
+    endif ()
 endif ()
 
 find_package(edlib 1.2.7 QUIET)
@@ -63,8 +77,6 @@ if (NOT edlib_FOUND)
     edlib
     GIT_REPOSITORY https://github.com/Martinsos/edlib
     GIT_TAG v1.2.7)
-
-  FetchContent_MakeAvailable(edlib)
 endif()
 
 find_package(fmt 8 QUIET)
@@ -81,8 +93,6 @@ if (NOT ram_FOUND)
     ram
     GIT_REPOSITORY https://github.com/lbcb-sci/ram
     GIT_TAG 2.1.1)
-
-  FetchContent_MakeAvailable(ram)
 endif()
 
 find_package(thread_pool 4 QUIET)
@@ -90,10 +100,10 @@ if (NOT thread_pool_FOUND)
   FetchContent_Declare(
     thread_pool
     GIT_REPOSITORY https://github.com/rvaser/thread_pool.git
-    GIT_TAG v4.0.0)
+    GIT_TAG 4.0.0)
 endif ()
 
-FetchContent_MakeAvailable(biosoup edlib fmt thread_pool ram)
+FetchContent_MakeAvailable(bioparser biosoup cereal edlib fmt thread_pool ram)
 
 # create main target
 set(camel_SOURCES
@@ -116,7 +126,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    bioparser edlib fmt ram)
+    bioparser cereal edlib fmt ram)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
