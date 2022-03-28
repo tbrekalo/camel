@@ -7,7 +7,7 @@ if (NOT DEFINED camel_INSTALL_CMAKEDIR)
 endif ()
 
 # TODO: consider this hot fix
-install(TARGETS camel bioparser biosoup thread_pool fmt ram EXPORT camel_TARGETS
+install(TARGETS camel bioparser biosoup cereal fmt ram thread_pool EXPORT camel_TARGETS
         RUNTIME COMPONENT camel_Runtime
         LIBRARY COMPONENT camel_Runtime
         NAMELINK_COMPONENT camel_Development

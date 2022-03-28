@@ -16,8 +16,8 @@ set(camel_TESTS_SOURCES
   ${CMAKE_CURRENT_LIST_DIR}/main.cc
 )
 
-add_executable(camel_TESTS ${${PROJECT_NAME}_TESTS_SOURCES})
-target_link_libraries(camel_TESTS 
+add_executable(camel_tests ${${PROJECT_NAME}_TESTS_SOURCES})
+target_link_libraries(camel_tests
   PRIVATE
     camel
     Catch2::Catch2WithMain
@@ -26,6 +26,6 @@ target_link_libraries(camel_TESTS
 include(CTest)
 include(Catch)
 enable_testing()
-catch_discover_tests(camel_TESTS
+catch_discover_tests(camel_tests
   WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/test
 )
