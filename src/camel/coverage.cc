@@ -1,31 +1,43 @@
 #include "camel/coverage.h"
 
+#include <fstream>
+#include <iterator>
+
 #include "biosoup/timer.hpp"
+#include "cereal/access.hpp"
+#include "cereal/archives/binary.hpp"
+#include "cereal/specialize.hpp"
+#include "cereal/types/string.hpp"
+#include "cereal/types/vector.hpp"
 #include "edlib.h"
 #include "fmt/core.h"
+#include "fmt/format.h"
 
 namespace camel {
 
 namespace detail {
 
-static constexpr std::size_t kAlignBatchCap = 1UL << 29UL;
+static constexpr std::size_t kAlignBatchCap = 1UL << 29UL;  // ~0.5gb
 
-}
+static constexpr std::size_t kDefaultPileStorageFileSz = 1UL << 22UL;  // ~4mb
+
+}  // namespace detail
 
 auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)
-    -> std::vector<std::vector<Coverage>> {
-  auto dst = std::vector<std::vector<Coverage>>();
+    -> std::vector<Pile> {
+  auto dst = std::vector<Pile>();
   auto ovlps = FindOverlaps(thread_pool, map_cfg, seqs);
 
   dst.reserve(seqs.size());
-  std::transform(
-      seqs.cbegin(), seqs.cend(), std::back_inserter(dst),
-      [](std::unique_ptr<biosoup::NucleicAcid> const& seq)
-          -> std::vector<Coverage> {
-        return std::vector<Coverage>(seq->inflated_len, {0, 0, 0, 0});
-      });
+  std::transform(seqs.cbegin(), seqs.cend(), std::back_inserter(dst),
+                 [](std::unique_ptr<biosoup::NucleicAcid> const& seq) -> Pile {
+                   return Pile{.id = seq->id,
+                               .seq_name = seq->name,
+                               .covgs = std::vector<Coverage>(seq->inflated_len,
+                                                              {0, 0, 0, 0})};
+                 });
 
   auto const find_batch_end =
       [&seqs](std::size_t const begin_idx, std::size_t const end_idx,
@@ -87,7 +99,7 @@ auto CalculateCoverage(
     for (auto i = 0U; i < edlib_res_align.alignmentLength; ++i) {
       switch (edlib_res_align.alignment[i]) {
         case 0: {  // match
-          ++dst[ovlp.lhs_id][query_pos].mat;
+          ++dst[ovlp.lhs_id].covgs[query_pos].mat;
 
           ++query_pos;
           ++target_pos;
@@ -96,19 +108,19 @@ auto CalculateCoverage(
         }
 
         case 1: {  // insertion on target
-          ++dst[ovlp.lhs_id][query_pos].del;
+          ++dst[ovlp.lhs_id].covgs[query_pos].del;
           ++query_pos;
           break;
         }
 
         case 2: {  // insertion on query
-          ++dst[ovlp.lhs_id][query_pos].ins;
+          ++dst[ovlp.lhs_id].covgs[query_pos].ins;
           ++target_id;
           break;
         }
 
         case 3: {  // mismatch
-          ++dst[ovlp.lhs_id][query_pos].mis;
+          ++dst[ovlp.lhs_id].covgs[query_pos].mis;
 
           ++query_pos;
           ++target_pos;
@@ -165,6 +177,132 @@ auto CalculateCoverage(
     }
   }
 
+  return dst;
+}
+
+template <class Archive>
+auto save(Archive& archive, Coverage const& cov) -> void {
+  archive(cov.mat, cov.del, cov.ins, cov.mis);
+};
+
+template <class Archive>
+auto load(Archive& archive, Coverage& cov) -> void {
+  archive(cov.mat, cov.del, cov.ins, cov.mis);
+}
+
+template <class Archive>
+auto save(Archive& archive, Pile const& pile) -> void {
+  archive(pile.id, pile.seq_name, pile.covgs);
+}
+
+template <class Archive>
+auto load(Archive& archive, Pile& pile) -> void {
+  archive(pile.id, pile.seq_name, pile.covgs);
+}
+
+auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+                    std::vector<Pile> const& piles,
+                    std::filesystem::path const& dst_dir) -> void {
+  SerializePiles(thread_pool, piles, dst_dir,
+                 detail::kDefaultPileStorageFileSz);
+}
+
+auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+                    std::vector<Pile> const& piles,
+                    std::filesystem::path const& dst_dir,
+                    std::size_t const expected_file_sz) -> void {
+  using PileConstIter = std::vector<Pile>::const_iterator;
+
+  if (std::filesystem::exists(dst_dir)) {
+    std::filesystem::remove_all(dst_dir);
+  }
+
+  std::filesystem::create_directory(dst_dir);
+
+  auto const find_batch_end = [](PileConstIter const first,
+                                 PileConstIter const last,
+                                 std::size_t const batch_cap) -> PileConstIter {
+    auto curr_iter = first;
+    for (auto curr_batch_sz = 0UL;
+         curr_batch_sz < batch_cap && curr_iter < last; ++curr_iter) {
+      curr_batch_sz += (curr_iter->covgs.size()) * sizeof(Coverage);
+    }
+
+    return curr_iter;
+  };
+
+  auto const serialize_batch = [&dst_dir](PileConstIter const first,
+                                          PileConstIter const last,
+                                          std::size_t file_id) -> void {
+    auto const dst_path =
+        dst_dir / fmt::format("pile_dump_{:04d}.camel", file_id);
+    auto dst_fstrm = std::fstream(
+        dst_path, std::ios::out | std::ios::trunc | std::ios::binary);
+
+    auto archive = cereal::BinaryOutputArchive(dst_fstrm);
+
+    archive(static_cast<std::size_t>(std::distance(first, last)));
+    for (auto it = first; it != last; ++it) {
+      archive(*it);
+    }
+  };
+
+  {
+    auto batch_nxt_id = 0U;
+    auto ser_futures = std::vector<std::future<void>>();
+
+    for (auto batch_begin = piles.cbegin(); batch_begin != piles.cend();) {
+      auto const batch_end =
+          find_batch_end(batch_begin, piles.cend(), expected_file_sz);
+
+      ser_futures.emplace_back(thread_pool->Submit(serialize_batch, batch_begin,
+                                                   batch_end, batch_nxt_id++));
+
+      batch_begin = batch_end;
+    }
+
+    for (auto& it : ser_futures) {
+      it.get();
+    }
+  }
+}
+
+auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+                      std::filesystem::path const& src_dir)
+    -> std::vector<Pile> {
+  auto dst = std::vector<Pile>();
+
+  auto pile_futures = std::vector<std::future<std::vector<Pile>>>();
+  for (auto const& it : std::filesystem::directory_iterator(src_dir)) {
+    pile_futures.emplace_back(thread_pool->Submit(
+        [](std::filesystem::directory_entry const& dir_entry)
+            -> std::vector<Pile> {
+          auto dst = std::vector<Pile>();
+
+          auto src_fstrm =
+              std::fstream(dir_entry.path(), std::ios::in | std::ios::binary);
+          auto archive = cereal::BinaryInputArchive(src_fstrm);
+
+          auto sz = std::size_t();
+          archive(sz);
+
+          dst.resize(sz);
+          for (auto i = 0UL; i < sz; ++i) {
+            archive(dst[i]);
+          }
+
+          dst.shrink_to_fit();
+          return dst;
+        },
+        it));
+  }
+
+  for (auto& it : pile_futures) {
+    auto piles = it.get();
+    std::move(piles.begin(), piles.end(), std::back_inserter(dst));
+  }
+
+  dst.shrink_to_fit();
   return dst;
 }
 
