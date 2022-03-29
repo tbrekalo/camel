@@ -6,9 +6,12 @@
 #include <vector>
 
 #include "biosoup/nucleic_acid.hpp"
-#include "camel/export.h"
 #include "camel/mapping.h"
 #include "thread_pool/thread_pool.hpp"
+
+/* export header */
+#include "camel/export.h"
+/* export header */
 
 namespace camel {
 
@@ -25,24 +28,10 @@ CAMEL_EXPORT struct Pile {
   std::vector<Coverage> covgs;
 };
 
-[[nodiscard]] CAMEL_EXPORT auto CalculateCoverage(
+CAMEL_EXPORT [[nodiscard]] auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)
     -> std::vector<Pile>;
-
-auto CAMEL_EXPORT
-SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-               std::vector<Pile> const& piles,
-               std::filesystem::path const& dst_dir) -> void;
-
-auto CAMEL_EXPORT SerializePiles(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<Pile> const& piles, std::filesystem::path const& dst_dir,
-    std::size_t const expected_file_sz) -> void;
-
-auto CAMEL_EXPORT
-DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-                 std::filesystem::path const& src_dir) -> std::vector<Pile>;
 
 }  // namespace camel
 
