@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "biosoup/nucleic_acid.hpp"
+#include "camel/coverage.h"
 #include "thread_pool/thread_pool.hpp"
 
 /* export header */
@@ -21,6 +22,20 @@ namespace camel {
     std::shared_ptr<thread_pool::ThreadPool> thread_pool,
     std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
+
+CAMEL_EXPORT auto SerializePiles(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::vector<Pile> const& piles, std::filesystem::path const& dst_dir)
+    -> void;
+
+CAMEL_EXPORT auto SerializePiles(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::vector<Pile> const& piles, std::filesystem::path const& dst_dir,
+    std::size_t const expected_file_sz) -> void;
+
+CAMEL_EXPORT [[nodiscard]] auto DeserializePiles(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::filesystem::path const& src_dir) -> std::vector<Pile>;
 
 }  // namespace camel
 

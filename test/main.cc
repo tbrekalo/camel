@@ -1,6 +1,6 @@
 #include "camel/coverage.h"
+#include "camel/io.h"
 #include "catch2/catch_test_macros.hpp"
-
 
 // TODO: snif... snif...
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects = 0U;
