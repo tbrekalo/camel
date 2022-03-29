@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "biosoup/timer.hpp"
+#include "camel/coverage.h"
 #include "camel/io.h"
 #include "camel/mapping.h"
-#include "camel/coverage.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
 #include "thread_pool/thread_pool.hpp"
@@ -30,7 +30,7 @@ auto main(int argc, char** argv) -> int {
 
   auto thread_pool = std::make_shared<thread_pool::ThreadPool>(
       result["threads"].as<std::uint32_t>());
-  
+
   auto paths = std::vector<std::filesystem::path>();
   auto paths_strs = result["paths"].as<std::vector<std::string>>();
   std::transform(std::make_move_iterator(paths_strs.begin()),
@@ -49,6 +49,8 @@ auto main(int argc, char** argv) -> int {
 
   auto const coverage =
       camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads);
+
+  camel::SerializePiles(thread_pool, coverage, std::filesystem::path("./data"));
 
   return EXIT_SUCCESS;
 }

@@ -1,2 +1,7 @@
 build
 .cache
+_skbuild
+/dist
+__pycache__
+*.so
+camelpy_test.egg-info
