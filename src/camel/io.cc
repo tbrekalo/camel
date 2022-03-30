@@ -218,6 +218,10 @@ auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
     std::move(piles.begin(), piles.end(), std::back_inserter(dst));
   }
 
+  std::sort(
+      dst.begin(), dst.end(),
+      [](Pile const& lhs, Pile const& rhs) -> bool { return lhs.id < rhs.id; });
+
   dst.shrink_to_fit();
   return dst;
 }
