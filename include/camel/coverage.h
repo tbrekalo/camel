@@ -16,13 +16,23 @@
 namespace camel {
 
 CAMEL_EXPORT struct Coverage {
-  std::uint16_t mat;
-  std::uint16_t del;
-  std::uint16_t ins;
-  std::uint16_t mis;
+  using ValueType = std::uint16_t;
+
+  Coverage() = default;
+  Coverage(ValueType mat, ValueType del, ValueType ins, ValueType mis)
+      : mat(mat), del(del), ins(ins), mis(mis) {}
+
+  ValueType mat;
+  ValueType del;
+  ValueType ins;
+  ValueType mis;
 };
 
 CAMEL_EXPORT struct Pile {
+  Pile() = default;
+  Pile(std::uint32_t id, std::string seq_name, std::vector<Coverage> covgs)
+      : id(id), seq_name(std::move(seq_name)), covgs(std::move(covgs)) {}
+
   std::uint32_t id;
   std::string seq_name;
   std::vector<Coverage> covgs;
