@@ -5,3 +5,4 @@ _skbuild
 __pycache__
 *.so
 camelpy_test.egg-info
+camelpy.egg-info
