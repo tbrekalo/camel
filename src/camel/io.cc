@@ -119,7 +119,7 @@ static auto load(Archive& archive, Pile& pile) -> void {
 auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
                     std::vector<Pile> const& piles,
                     std::filesystem::path const& dst_dir) -> void {
-  SerializePiles(thread_pool, piles, dst_dir,
+  SerializePiles(std::move(thread_pool), piles, dst_dir,
                  detail::kDefaultPileStorageFileSz);
 }
 

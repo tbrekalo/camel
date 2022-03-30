@@ -38,8 +38,7 @@ if (CAMEL_PACK AND SKBUILD)
 endif ()
 
 if (CAMEL_BUILD_PYTHON)
-  set_property(GLOBAL # Sniff... Sniff... can do better?
-               PROPERTY POSITION_INDEPENDENT_CODE TRUE)
+  set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 endif ()
 
 if (NOT DEFINED CMAKE_CXX_VISIBILITY_PRESET AND
@@ -146,8 +145,8 @@ if (CAMEL_BUILD_EXE)
     GIT_TAG v3.0.0)
     FetchContent_MakeAvailable(cxxopts)
  
-  add_executable(camel_covg_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
-  target_link_libraries(camel_covg_exe 
+  add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
+  target_link_libraries(camel_exe
     PRIVATE 
       camel cxxopts fmt)
 endif ()
@@ -171,8 +170,7 @@ if (CAMEL_BUILD_PYTHON)
     GIT_TAG master)
 
   FetchContent_MakeAvailable(nanobind)
-  nanobind_add_module(camelpy_ext NB_STATIC 
-    ${PROJECT_SOURCE_DIR}/src/bind.cc) 
+  nanobind_add_module(camelpy_ext NB_STATIC ${PROJECT_SOURCE_DIR}/src/bind.cc) 
   target_link_libraries(camelpy_ext PRIVATE camel thread_pool)
 
   if (SKBUILD)
