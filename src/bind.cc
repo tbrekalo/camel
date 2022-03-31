@@ -4,6 +4,7 @@
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"
 #include "nanobind/stl/string.h"
+#include "nanobind/stl/tuple.h"
 #include "nanobind/stl/vector.h"
 
 namespace nb = nanobind;
@@ -14,7 +15,7 @@ NB_MODULE(camelpy_ext, m) {
   nb::class_<thread_pool::ThreadPool>(m, "ThreadPoolHandle")
       .def(nb::init<std::size_t>());
 
-  m.def("CreateThreadPoolHandle",
+  m.def("create_thread_pool",
         [](std::size_t const n_threads)
             -> std::shared_ptr<thread_pool::ThreadPool> {
           return std::make_shared<thread_pool::ThreadPool>(n_threads);

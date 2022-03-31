@@ -7,25 +7,21 @@ std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects = 0U;
 
 namespace camel::test {
 
-static auto const kTestPile00 =
-    Pile{.id = 0U,
-         .seq_name = "test_pile_00",
-         .covgs = std::vector<Coverage>{
-             Coverage{.mat = 1, .del = 0, .ins = 0, .mis = 0},
-             Coverage{.mat = 0, .del = 1, .ins = 0, .mis = 0},
-             Coverage{.mat = 0, .del = 0, .ins = 1, .mis = 0},
-             Coverage{.mat = 0, .del = 0, .ins = 0, .mis = 1},
-         }};
+static auto const kTestPile00 = Pile(0U, "test_pile_00",
+                                     std::vector<Coverage>{
+                                         Coverage(1, 0, 0, 0),
+                                         Coverage(0, 1, 0, 0),
+                                         Coverage(0, 0, 1, 0),
+                                         Coverage(0, 0, 0, 1),
+                                     });
 
-static auto const kTestPile01 =
-    Pile{.id = 0U,
-         .seq_name = "test_pile_01",
-         .covgs = std::vector<Coverage>{
-             Coverage{.mat = 0, .del = 0, .ins = 0, .mis = 1},
-             Coverage{.mat = 0, .del = 0, .ins = 1, .mis = 0},
-             Coverage{.mat = 0, .del = 1, .ins = 0, .mis = 0},
-             Coverage{.mat = 1, .del = 0, .ins = 0, .mis = 0},
-         }};
+static auto const kTestPile01 = Pile{0U, "test_pile_01",
+                                     std::vector<Coverage>{
+                                         Coverage(0, 0, 0, 1),
+                                         Coverage(0, 0, 1, 0),
+                                         Coverage(0, 1, 0, 0),
+                                         Coverage(1, 0, 0, 0),
+                                     }};
 
 static auto const kTestDumpPath = std::filesystem::path("./test_dump");
 
