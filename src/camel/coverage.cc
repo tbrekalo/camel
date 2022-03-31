@@ -22,10 +22,9 @@ auto CalculateCoverage(
   dst.reserve(seqs.size());
   std::transform(seqs.cbegin(), seqs.cend(), std::back_inserter(dst),
                  [](std::unique_ptr<biosoup::NucleicAcid> const& seq) -> Pile {
-                   return Pile{.id = seq->id,
-                               .seq_name = seq->name,
-                               .covgs = std::vector<Coverage>(seq->inflated_len,
-                                                              {0, 0, 0, 0})};
+                   return Pile(
+                       seq->id, seq->name,
+                       std::vector<Coverage>(seq->inflated_len, {0, 0, 0, 0}));
                  });
 
   auto const find_batch_end =
