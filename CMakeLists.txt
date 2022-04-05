@@ -124,10 +124,10 @@ target_link_libraries(camel
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
-  add_compile_options(
+  target_compile_options(camel PUBLIC
     $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>
     $<$<CONFIG:Debug,RelWithDebInfo>:-fno-omit-frame-pointer>)
-  add_link_options(
+  target_link_options(camel PUBLIC
     $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>)
 endif ()
 
