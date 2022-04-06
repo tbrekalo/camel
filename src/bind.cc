@@ -26,7 +26,7 @@ NB_MODULE(camelpy_ext, m) {
                     std::vector<camel::Coverage>>())
       .def_readonly("id", &camel::Pile::id)
       .def_readonly("seq_name", &camel::Pile::seq_name)
-      .def_readonly("covgs", &camel::Pile::covgs);
+      .def_readonly("coverages", &camel::Pile::covgs);
 
   nb::class_<thread_pool::ThreadPool>(m, "ThreadPool")
       .def(nb::init<std::size_t>());
