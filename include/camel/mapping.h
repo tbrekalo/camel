@@ -15,6 +15,9 @@
 namespace camel {
 
 CAMEL_EXPORT struct MapCfg {
+  MapCfg() = default;
+  MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p);
+
   std::uint8_t kmer_len = 15;
   std::uint8_t win_len = 5;
   double filter_p = 0.01;

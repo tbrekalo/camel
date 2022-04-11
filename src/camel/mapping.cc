@@ -13,6 +13,9 @@ namespace camel {
 static constexpr std::size_t kMinimizeBatchCap = 1UL << 32UL;
 static constexpr std::size_t kMapBatchCap = 1UL << 30UL;
 
+MapCfg::MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p)
+    : kmer_len(kmer_len), win_len(win_len), filter_p(filter_p) {}
+
 auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)

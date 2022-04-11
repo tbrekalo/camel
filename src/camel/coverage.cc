@@ -12,6 +12,12 @@ static constexpr std::size_t kAlignBatchCap = 1UL << 29UL;  // ~0.5gb
 
 }  // namespace detail
 
+Coverage::Coverage(ValueType mat, ValueType del, ValueType ins, ValueType mis)
+    : mat(mat), del(del), ins(ins), mis(mis) {}
+
+Pile::Pile(std::uint32_t id, std::string seq_name, std::vector<Coverage> covgs)
+    : id(id), seq_name(std::move(seq_name)), covgs(std::move(covgs)) {}
+
 auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)

@@ -19,8 +19,7 @@ CAMEL_EXPORT struct Coverage {
   using ValueType = std::uint16_t;
 
   Coverage() = default;
-  Coverage(ValueType mat, ValueType del, ValueType ins, ValueType mis)
-      : mat(mat), del(del), ins(ins), mis(mis) {}
+  Coverage(ValueType mat, ValueType del, ValueType ins, ValueType mis);
 
   ValueType mat;
   ValueType del;
@@ -30,8 +29,7 @@ CAMEL_EXPORT struct Coverage {
 
 CAMEL_EXPORT struct Pile {
   Pile() = default;
-  Pile(std::uint32_t id, std::string seq_name, std::vector<Coverage> covgs)
-      : id(id), seq_name(std::move(seq_name)), covgs(std::move(covgs)) {}
+  Pile(std::uint32_t id, std::string seq_name, std::vector<Coverage> covgs);
 
   std::uint32_t id;
   std::string seq_name;
