@@ -105,7 +105,8 @@ set(camel_SOURCES
 
   ${PROJECT_SOURCE_DIR}/src/camel/coverage.cc
   ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/io.cc)
+  ${PROJECT_SOURCE_DIR}/src/camel/io.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/serialization.cc)
 
 add_library(camel ${camel_SOURCES})
 add_library(${PROJECT_NAME}::camel ALIAS camel)
