@@ -13,19 +13,16 @@ if (NOT Catch2_FOUND)
 endif()
 
 set(camel_TESTS_SOURCES
-  ${CMAKE_CURRENT_LIST_DIR}/main.cc
-)
+  ${CMAKE_CURRENT_LIST_DIR}/src/serialization.cc)
 
 add_executable(camel_tests ${${PROJECT_NAME}_TESTS_SOURCES})
 target_link_libraries(camel_tests
   PRIVATE
     camel
-    Catch2::Catch2WithMain
-)
+    Catch2::Catch2WithMain)
 
 include(CTest)
 include(Catch)
 enable_testing()
 catch_discover_tests(camel_tests
-  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/test
-)
+  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/test)
