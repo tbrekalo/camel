@@ -15,13 +15,16 @@
 
 namespace camel {
 
-[[nodiscard]] CAMEL_EXPORT auto LoadSequences(std::filesystem::path const& path)
+CAMEL_EXPORT [[nodiscard]] auto LoadSequences(std::filesystem::path const& path)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
-[[nodiscard]] CAMEL_EXPORT auto LoadSequences(
+CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool,
     std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
+
+CAMEL_EXPORT auto SerializePile(Pile const& pile,
+                                std::filesystem::path const& dst_file) -> void;
 
 CAMEL_EXPORT auto SerializePiles(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool,
