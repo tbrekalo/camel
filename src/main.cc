@@ -47,10 +47,7 @@ auto main(int argc, char** argv) -> int {
   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
              reads.size());
 
-  auto const coverage =
-      camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads);
-
-  camel::SerializePiles(thread_pool, coverage, std::filesystem::path("./data"));
+  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, "./data");
 
   return EXIT_SUCCESS;
 }

@@ -92,7 +92,6 @@ auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
   return dst;
 }
 
-
 template <class Buff>
 static auto Store(Buff& buff, Pile const& pile) -> void {
   buff(pile.id, pile.seq_name, pile.covgs);
@@ -103,6 +102,20 @@ static auto Load(Buff& buff, Pile& pile) -> void {
   buff(pile.id, pile.seq_name, pile.covgs);
 }
 
+CAMEL_EXPORT auto SerializePileBatch(std::vector<Pile>::const_iterator first,
+                                     std::vector<Pile>::const_iterator last,
+                                     std::filesystem::path const& dst_dir,
+                                     std::string const& batch_name) -> void {
+  auto binary_out = detail::BinaryOutBuffer();
+  binary_out(static_cast<std::size_t>(std::distance(first, last)));
+  for (auto it = first; it != last; ++it) {
+    binary_out(*it);
+  }
+
+  auto const dst_path = dst_dir / (batch_name + "camel.gz");
+
+  detail::GzStoreBytes(binary_out.Bytes(), dst_path);
+}
 
 auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
                     std::vector<Pile> const& piles,
@@ -138,15 +151,8 @@ auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
   auto const serialize_batch = [&dst_dir](PileConstIter const first,
                                           PileConstIter const last,
                                           std::size_t file_id) -> void {
-    auto const dst_path =
-        dst_dir / fmt::format("pile_dump_{:04d}.camel.gz", file_id);
-    auto binary_out = detail::BinaryOutBuffer();
-    binary_out(static_cast<std::size_t>(std::distance(first, last)));
-    for (auto it = first; it != last; ++it) {
-      binary_out(*it);
-    }
-
-    detail::GzStoreBytes(binary_out.Bytes(), dst_path);
+    auto const pile_file_name = fmt::format("pile_dump_{:04d}", file_id);
+    SerializePileBatch(first, last, dst_dir, pile_file_name);
   };
 
   {

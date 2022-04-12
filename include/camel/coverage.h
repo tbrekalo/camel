@@ -16,30 +16,27 @@
 namespace camel {
 
 CAMEL_EXPORT struct Coverage {
-  using ValueType = std::uint16_t;
+  using ValueType = std::uint32_t;
 
-  Coverage() = default;
-  Coverage(ValueType mat, ValueType del, ValueType ins, ValueType mis);
+  ValueType a;
+  ValueType c;
+  ValueType g;
+  ValueType t;
 
-  ValueType mat;
   ValueType del;
   ValueType ins;
-  ValueType mis;
 };
 
 CAMEL_EXPORT struct Pile {
-  Pile() = default;
-  Pile(std::uint32_t id, std::string seq_name, std::vector<Coverage> covgs);
-
   std::uint32_t id;
   std::string seq_name;
   std::vector<Coverage> covgs;
 };
 
-CAMEL_EXPORT [[nodiscard]] auto CalculateCoverage(
+CAMEL_EXPORT auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)
-    -> std::vector<Pile>;
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::filesystem::path const& pile_storage_dir) -> void;
 
 }  // namespace camel
 
