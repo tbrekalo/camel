@@ -11,11 +11,7 @@
 
 #include "bioparser/fasta_parser.hpp"
 #include "bioparser/fastq_parser.hpp"
-#include "cereal/access.hpp"
-#include "cereal/archives/binary.hpp"
-#include "cereal/specialize.hpp"
-#include "cereal/types/string.hpp"
-#include "cereal/types/vector.hpp"
+#include "detail/serialization.h"
 #include "fmt/core.h"
 
 namespace camel {
@@ -96,25 +92,17 @@ auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
   return dst;
 }
 
-template <class Archive>
-static auto save(Archive& archive, Coverage const& cov) -> void {
-  archive(cov.mat, cov.del, cov.ins, cov.mis);
-};
 
-template <class Archive>
-static auto load(Archive& archive, Coverage& cov) -> void {
-  archive(cov.mat, cov.del, cov.ins, cov.mis);
+template <class Buff>
+static auto Store(Buff& buff, Pile const& pile) -> void {
+  buff(pile.id, pile.seq_name, pile.covgs);
 }
 
-template <class Archive>
-static auto save(Archive& archive, Pile const& pile) -> void {
-  archive(pile.id, pile.seq_name, pile.covgs);
+template <class Buff>
+static auto Load(Buff& buff, Pile& pile) -> void {
+  buff(pile.id, pile.seq_name, pile.covgs);
 }
 
-template <class Archive>
-static auto load(Archive& archive, Pile& pile) -> void {
-  archive(pile.id, pile.seq_name, pile.covgs);
-}
 
 auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
                     std::vector<Pile> const& piles,
@@ -152,15 +140,13 @@ auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
                                           std::size_t file_id) -> void {
     auto const dst_path =
         dst_dir / fmt::format("pile_dump_{:04d}.camel", file_id);
-    auto dst_fstrm = std::fstream(
-        dst_path, std::ios::out | std::ios::trunc | std::ios::binary);
-
-    auto archive = cereal::BinaryOutputArchive(dst_fstrm);
-
-    archive(static_cast<std::size_t>(std::distance(first, last)));
+    auto binary_out = detail::BinaryOutBuffer();
+    binary_out(static_cast<std::size_t>(std::distance(first, last)));
     for (auto it = first; it != last; ++it) {
-      archive(*it);
+      binary_out(*it);
     }
+
+    detail::GzStoreBytes(binary_out.Bytes(), dst_path);
   };
 
   {
@@ -195,16 +181,15 @@ auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
             -> std::vector<Pile> {
           auto dst = std::vector<Pile>();
 
-          auto src_fstrm =
-              std::fstream(dir_entry.path(), std::ios::in | std::ios::binary);
-          auto archive = cereal::BinaryInputArchive(src_fstrm);
+          auto binary_in =
+              detail::BinaryInBuffer(detail::GzLoadBytes(dir_entry));
 
           auto sz = std::size_t();
-          archive(sz);
+          binary_in(sz);
 
           dst.resize(sz);
           for (auto i = 0UL; i < sz; ++i) {
-            archive(dst[i]);
+            binary_in(dst[i]);
           }
 
           dst.shrink_to_fit();
