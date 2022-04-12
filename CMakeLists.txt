@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
 project(camel VERSION 0.2.0
-              LANGUAGES C CXX
+              LANGUAGES CXX
               DESCRIPTION "Snp detection tool")
 
 # test if camel is main project

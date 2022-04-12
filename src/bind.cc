@@ -77,16 +77,16 @@ NB_MODULE(camelpy_ext, m) {
   m.def("calculate_coverage", &camel::CalculateCoverage);
 
   nb::class_<camel::Coverage>(m, "Coverage")
-      .def(nb::init<camel::Coverage::ValueType, camel::Coverage::ValueType,
-                    camel::Coverage::ValueType, camel::Coverage::ValueType>())
-      .def_readwrite("match", &camel::Coverage::mat)
-      .def_readwrite("deletion", &camel::Coverage::del)
-      .def_readwrite("insertion", &camel::Coverage::ins)
-      .def_readwrite("mismatch", &camel::Coverage::mis);
+      .def(nb::init<>())
+      .def_readwrite("a", &camel::Coverage::a)
+      .def_readwrite("c", &camel::Coverage::c)
+      .def_readwrite("g", &camel::Coverage::g)
+      .def_readwrite("t", &camel::Coverage::t)
+      .def_readwrite("del", &camel::Coverage::del)
+      .def_readwrite("ins", &camel::Coverage::ins);
 
   nb::class_<camel::Pile>(m, "Pile")
-      .def(nb::init<std::uint32_t, std::string const&,
-                    std::vector<camel::Coverage>>())
+      .def(nb::init<>())
       .def_readonly("id", &camel::Pile::id)
       .def_readonly("seq_name", &camel::Pile::seq_name)
       .def_readonly("coverages", &camel::Pile::covgs);
