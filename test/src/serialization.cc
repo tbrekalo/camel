@@ -7,20 +7,24 @@ std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects = 0U;
 
 namespace camel::test {
 
-static auto const kTestPile00 = Pile(0U, "test_pile_00",
+static auto const kTestPile00 = Pile{0U, "test_pile_00",
                                      std::vector<Coverage>{
-                                         Coverage(1, 0, 0, 0),
-                                         Coverage(0, 1, 0, 0),
-                                         Coverage(0, 0, 1, 0),
-                                         Coverage(0, 0, 0, 1),
-                                     });
+                                         Coverage{1, 0, 0, 0, 0, 0},
+                                         Coverage{0, 1, 0, 0, 0, 0},
+                                         Coverage{0, 0, 1, 0, 0, 0},
+                                         Coverage{0, 0, 0, 1, 0, 0},
+                                         Coverage{0, 0, 0, 0, 1, 0},
+                                         Coverage{0, 0, 0, 0, 0, 1},
+                                     }};
 
 static auto const kTestPile01 = Pile{0U, "test_pile_01",
                                      std::vector<Coverage>{
-                                         Coverage(0, 0, 0, 1),
-                                         Coverage(0, 0, 1, 0),
-                                         Coverage(0, 1, 0, 0),
-                                         Coverage(1, 0, 0, 0),
+                                         Coverage{0, 0, 0, 0, 0, 1},
+                                         Coverage{0, 0, 0, 0, 1, 0},
+                                         Coverage{0, 0, 0, 1, 0, 0},
+                                         Coverage{0, 0, 1, 0, 0, 0},
+                                         Coverage{0, 1, 0, 0, 0, 0},
+                                         Coverage{1, 0, 0, 0, 0, 0},
                                      }};
 
 static auto const kTestDumpPath = std::filesystem::path("./test_dump");
@@ -44,10 +48,12 @@ TEST_CASE("camel pile serialization", "[camel][pile][coverage][serialize]") {
 
     REQUIRE(src_piles[i].covgs.size() == read_piles[i].covgs.size());
     for (auto j = 0UL; j < src_piles.size(); ++j) {
-      CHECK(src_piles[i].covgs[j].mat == read_piles[i].covgs[j].mat);
+      CHECK(src_piles[i].covgs[j].a == read_piles[i].covgs[j].a);
+      CHECK(src_piles[i].covgs[j].c == read_piles[i].covgs[j].c);
+      CHECK(src_piles[i].covgs[j].g == read_piles[i].covgs[j].g);
+      CHECK(src_piles[i].covgs[j].t == read_piles[i].covgs[j].t);
       CHECK(src_piles[i].covgs[j].del == read_piles[i].covgs[j].del);
       CHECK(src_piles[i].covgs[j].ins == read_piles[i].covgs[j].ins);
-      CHECK(src_piles[i].covgs[j].mis == read_piles[i].covgs[j].mis);
     }
   }
 }
