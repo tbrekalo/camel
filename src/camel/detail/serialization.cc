@@ -1,10 +1,8 @@
-#include "camel/serialization.h"
+#include "serialization.h"
 
 #include "zlib.h"
 
-namespace camel {
-
-namespace detail {
+namespace camel::detail {
 
 constexpr auto kLibBufferCapacity = 1U << 18U;
 
@@ -13,8 +11,6 @@ struct GzFileDeleter {
 };
 
 using GzFileHandle = std::unique_ptr<gzFile_s, GzFileDeleter>;
-
-}  // namespace detail
 
 BinaryOutBuffer::BinaryOutBuffer(std::size_t capacity) {
   buffer_.reserve(capacity);
@@ -49,20 +45,20 @@ auto GzStoreBytes(std::vector<std::byte> const& bytes,
                   std::filesystem::path const& path) -> void {
   if (std::filesystem::exists(path.parent_path())) {
   }
-  auto dst_file = detail::GzFileHandle(gzopen(path.c_str(), "wb"));
+  auto dst_file = GzFileHandle(gzopen(path.c_str(), "wb"));
   gzwrite(dst_file.get(), bytes.data(),
           static_cast<std::uint32_t>(bytes.size()));
 }
 
 auto GzLoadBytes(std::filesystem::path const& path) -> std::vector<std::byte> {
   auto dst = std::vector<std::byte>();
-  auto src_file = detail::GzFileHandle(gzopen(path.c_str(), "rb"));
-  gzbuffer(src_file.get(), detail::kLibBufferCapacity);
+  auto src_file = GzFileHandle(gzopen(path.c_str(), "rb"));
+  gzbuffer(src_file.get(), kLibBufferCapacity);
 
-  auto buffer = std::vector<std::byte>(detail::kLibBufferCapacity);
+  auto buffer = std::vector<std::byte>(kLibBufferCapacity);
   while (true) {
     auto const n_read =
-        gzread(src_file.get(), buffer.data(), detail::kLibBufferCapacity);
+        gzread(src_file.get(), buffer.data(), kLibBufferCapacity);
 
     // TODO: could be better
     std::copy(buffer.begin(), std::next(buffer.begin(), n_read),
@@ -76,4 +72,4 @@ auto GzLoadBytes(std::filesystem::path const& path) -> std::vector<std::byte> {
   return dst;
 }
 
-}  // namespace camel
+}  // namespace camel::detail

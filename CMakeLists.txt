@@ -63,21 +63,6 @@ FetchContent_Declare(
   GIT_TAG 0.10.0)
 
 FetchContent_Declare(
-        cereal
-        GIT_REPOSITORY https://github.com/USCiLab/cereal
-        GIT_TAG v1.3.2)
-
-FetchContent_GetProperties(cereal)
-if (NOT cereal_POPULATED)
-    FetchContent_Populate(cereal)
-    add_subdirectory(
-            ${cereal_SOURCE_DIR}
-            ${cereal_BINARY_DIR}
-            EXCLUDE_FROM_ALL)
-    add_library(cereal::cereal ALIAS cereal)
-endif ()
-
-FetchContent_Declare(
   edlib
   GIT_REPOSITORY https://github.com/Martinsos/edlib
   GIT_TAG v1.2.7)
@@ -97,16 +82,16 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/rvaser/thread_pool.git
   GIT_TAG 4.0.0)
 
-FetchContent_MakeAvailable(bioparser biosoup cereal edlib fmt thread_pool ram)
+FetchContent_MakeAvailable(bioparser biosoup edlib fmt thread_pool ram)
 
 # create main target
 set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/serialization.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/coverage.cc
   ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/io.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/serialization.cc)
+  ${PROJECT_SOURCE_DIR}/src/camel/io.cc)
 
 add_library(camel ${camel_SOURCES})
 add_library(${PROJECT_NAME}::camel ALIAS camel)
@@ -121,7 +106,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    bioparser cereal edlib fmt ram)
+    bioparser edlib fmt ram)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)

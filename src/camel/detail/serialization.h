@@ -2,8 +2,8 @@
 #define CAMEL_SERIALIZATION_H_
 
 #include <algorithm>
-#include <filesystem>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -11,9 +11,7 @@
 
 #include "camel/meta.h"
 
-namespace camel {
-
-namespace detail {
+namespace camel::detail {
 
 template <class T>
 struct FatPointer {
@@ -26,8 +24,6 @@ struct FatPointer {
   auto end() noexcept -> T* { return ptr + n; }
   auto end() const noexcept -> T const* { return ptr + n; }
 };
-
-}  // namespace detail
 
 template <class T>
 class IsTriviallyArchivable {
@@ -103,7 +99,7 @@ class BinaryOutBuffer {
   }
 
   template <class T>
-  auto InvokeStore(detail::FatPointer<T> const src_fat_ptr)
+  auto InvokeStore(FatPointer<T> const src_fat_ptr)
       -> std::enable_if_t<IsTriviallyArchivableV<T>> {
     StoreBytes(BitCast<std::byte const*>(std::addressof(src_fat_ptr.n)),
                sizeof(src_fat_ptr.n));
@@ -151,7 +147,7 @@ class BinaryInBuffer {
   }
 
   template <class T>
-  auto InvokeLoad(detail::FatPointer<T>& dst_fat_ptr)
+  auto InvokeLoad(FatPointer<T>& dst_fat_ptr)
       -> std::enable_if_t<IsTriviallyArchivableV<T>> {
     LoadBytes(BitCast<std::byte*>(std::addressof(dst_fat_ptr.n)),
               sizeof(dst_fat_ptr.n));
@@ -169,13 +165,13 @@ class BinaryInBuffer {
 
 template <class Buff>
 auto Store(Buff& buff, std::string const& str) -> void {
-  buff(detail::FatPointer<std::add_const_t<std::string::value_type>>{
+  buff(FatPointer<std::add_const_t<std::string::value_type>>{
       .n = str.size(), .ptr = str.data()});
 }
 
 template <class Buff>
 auto Load(Buff& buff, std::string& dst) -> void {
-  auto buff_view = detail::FatPointer<std::string::value_type>();
+  auto buff_view = FatPointer<std::string::value_type>();
   buff(buff_view);
 
   dst.clear();
@@ -186,14 +182,13 @@ auto Load(Buff& buff, std::string& dst) -> void {
 template <class Buff, class T>
 auto Store(Buff& buff, std::vector<T> const& vec)
     -> std::enable_if_t<IsTriviallyArchivableV<T>> {
-  buff(detail::FatPointer<std::add_const_t<T>>{.n = vec.size(),
-                                               .ptr = vec.data()});
+  buff(FatPointer<std::add_const_t<T>>{.n = vec.size(), .ptr = vec.data()});
 }
 
 template <class Buff, class T>
 auto Load(Buff& buff, std::vector<T>& dst)
     -> std::enable_if_t<IsTriviallyArchivableV<T>> {
-  auto buff_view = detail::FatPointer<T>{};
+  auto buff_view = FatPointer<T>{};
   buff(buff_view);
 
   dst.clear();
@@ -226,8 +221,9 @@ auto Load(Buff& buff, std::vector<T>& dst)
 auto GzStoreBytes(std::vector<std::byte> const& bytes,
                   std::filesystem::path const& path) -> void;
 
-auto GzLoadBytes(std::filesystem::path const& path) -> std::vector<std::byte>;
+[[nodiscard]] auto GzLoadBytes(std::filesystem::path const& path)
+    -> std::vector<std::byte>;
 
-}  // namespace camel
+}  // namespace camel::detail
 
 #endif /* CAMEL_SERIALIZATION_H_ */
