@@ -139,7 +139,7 @@ auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
                                           PileConstIter const last,
                                           std::size_t file_id) -> void {
     auto const dst_path =
-        dst_dir / fmt::format("pile_dump_{:04d}.camel", file_id);
+        dst_dir / fmt::format("pile_dump_{:04d}.camel.gz", file_id);
     auto binary_out = detail::BinaryOutBuffer();
     binary_out(static_cast<std::size_t>(std::distance(first, last)));
     for (auto it = first; it != last; ++it) {
