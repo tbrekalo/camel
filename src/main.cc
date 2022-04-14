@@ -16,6 +16,10 @@
 #include "fmt/core.h"
 #include "thread_pool/thread_pool.hpp"
 
+#include "mimalloc-new-delete.h"
+#include "mimalloc-override.h"
+#include "mimalloc.h"
+
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
 
 auto main(int argc, char** argv) -> int {

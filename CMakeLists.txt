@@ -68,6 +68,7 @@ conan_cmake_configure(
   REQUIRES 
     cxxopts/3.0.0 
     fmt/8.1.1
+    mimalloc/2.0.3
     zstd/1.5.2
   GENERATORS 
     cmake_find_package_multi)
@@ -152,11 +153,12 @@ target_include_directories(camel PUBLIC
 
 if (CAMEL_BUILD_EXE) 
   find_package(cxxopts CONFIG)
+  find_package(mimalloc CONFIG)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe
     PRIVATE 
-      camel cxxopts::cxxopts fmt::fmt)
+      camel cxxopts::cxxopts mimalloc::mimalloc fmt::fmt)
 endif ()
 
 if (CAMEL_BUILD_PYTHON)

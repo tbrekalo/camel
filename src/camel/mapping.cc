@@ -69,8 +69,8 @@ auto FindOverlaps(
     minimizer_engine.Filter(map_cfg.filter_p);
 
     fmt::print(stderr,
-               "[camel::FindOverlaps]({:12.3f}) minimized {} sequences\n",
-               timer.Stop(), minimize_batch_end - minimize_batch_begin);
+               "[camel::FindOverlaps]({:12.3f}) minimized {} / {} sequences\n",
+               timer.Stop(), minimize_batch_end, seqs.size());
     timer.Start();
 
     for (auto map_batch_begin = 0U; map_batch_begin < minimize_batch_end;) {
@@ -90,8 +90,8 @@ auto FindOverlaps(
       }
 
       fmt::print(stderr,
-                 "[camel::FindOverlaps]({:12.3f}) mapped {} sequences\n",
-                 timer.Stop(), map_batch_end - map_batch_begin);
+                 "[camel::FindOverlaps]({:12.3f}) mapped {} / {} sequences\n",
+                 timer.Stop(), map_batch_end, minimize_batch_end);
       timer.Start();
 
       map_batch_begin = map_batch_end;

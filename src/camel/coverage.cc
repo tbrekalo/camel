@@ -15,7 +15,7 @@ namespace camel {
 
 namespace detail {
 
-static constexpr std::size_t kAlignBatchCap = 1UL << 36UL;  // ~68gb
+static constexpr std::size_t kAlignBatchCap = 1UL << 36UL;  // ~68.7gb
 
 }  // namespace detail
 
@@ -181,6 +181,7 @@ auto CalculateCoverage(
                  comp_time, dst_file.string(), 1. * raw_sz / com_sz);
     };
 
+
     for (auto covg_batch_begin = 0UL, batch_id = 0UL;
          covg_batch_begin < seqs.size(); ++batch_id) {
       timer.Start();
@@ -200,6 +201,7 @@ auto CalculateCoverage(
                      std::next(seqs.begin(), covg_batch_end),
                      std::next(ovlps.begin(), covg_batch_begin),
                      std::back_inserter(pile_futures), async_calc_coverage_for);
+
       fmt::print(stderr,
                  "[camel::CalculateCoverage] calculating coverage "
                  "for {} reads\n",
