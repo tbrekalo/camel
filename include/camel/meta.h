@@ -1,3 +1,6 @@
+#ifndef CAMEL_META_H_
+#define CAMEL_META_H_
+
 #include <cstring>
 #include <memory>
 #include <type_traits>
@@ -20,3 +23,5 @@ constexpr auto BitCast(From const& src)
 }
 
 }  // namespace camel
+
+#endif /* CAMEL_META_H_ */

@@ -218,10 +218,10 @@ auto Load(Buff& buff, std::vector<T>& dst)
   }
 }
 
-auto GzStoreBytes(std::vector<std::byte> const& bytes,
+auto CompressToFile(std::vector<std::byte> const& bytes,
                   std::filesystem::path const& path) -> void;
 
-[[nodiscard]] auto GzLoadBytes(std::filesystem::path const& path)
+[[nodiscard]] auto DecompressFromFile(std::filesystem::path const& path)
     -> std::vector<std::byte>;
 
 }  // namespace camel::detail

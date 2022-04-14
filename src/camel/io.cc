@@ -18,7 +18,7 @@ namespace camel {
 
 namespace detail {
 
-static constexpr std::size_t kDefaultPileStorageFileSz = 1UL << 28UL;  // ~270mb
+static constexpr std::size_t kDefaultPileStorageFileSz = 1UL << 32UL;  // ~4gb
 
 static constexpr auto kFastaSuffxies =
     std::array<char const*, 4>{".fasta", "fasta.gz", ".fa", ".fa.gz"};
@@ -105,16 +105,22 @@ static auto Load(Buff& buff, Pile& pile) -> void {
 CAMEL_EXPORT auto SerializePileBatch(std::vector<Pile>::const_iterator first,
                                      std::vector<Pile>::const_iterator last,
                                      std::filesystem::path const& dst_dir,
-                                     std::string const& batch_name) -> void {
+                                     std::string const& batch_name)
+    -> std::filesystem::path {
+  auto de_sz = std::size_t(0);
+
   auto binary_out = detail::BinaryOutBuffer();
   binary_out(static_cast<std::size_t>(std::distance(first, last)));
   for (auto it = first; it != last; ++it) {
+    de_sz += sizeof(it->id) + it->seq_name.size() +
+             it->covgs.size() * sizeof(Coverage);
     binary_out(*it);
   }
 
-  auto const dst_path = dst_dir / (batch_name + "camel.gz");
+  auto const dst_path = dst_dir / (batch_name + ".camel");
 
-  detail::GzStoreBytes(binary_out.Bytes(), dst_path);
+  detail::CompressToFile(binary_out.Bytes(), dst_path);
+  return dst_path;
 }
 
 auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
@@ -188,7 +194,7 @@ auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
           auto dst = std::vector<Pile>();
 
           auto binary_in =
-              detail::BinaryInBuffer(detail::GzLoadBytes(dir_entry));
+              detail::BinaryInBuffer(detail::DecompressFromFile(dir_entry));
 
           auto sz = std::size_t();
           binary_in(sz);

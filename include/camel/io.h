@@ -23,13 +23,10 @@ CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
     std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
-CAMEL_EXPORT auto SerializePile(Pile const& pile,
-                                std::filesystem::path const& dst_file) -> void;
-
 CAMEL_EXPORT auto SerializePileBatch(std::vector<Pile>::const_iterator first,
                                      std::vector<Pile>::const_iterator last,
                                      std::filesystem::path const& dst_dir,
-                                     std::string const& batch_name) -> void;
+                                     std::string const& batch_name) -> std::filesystem::path;
 
 CAMEL_EXPORT auto SerializePiles(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool,

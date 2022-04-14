@@ -1,16 +1,15 @@
 #include "serialization.h"
 
-#include "zlib.h"
+#include <fstream>
+#include <stdexcept>
+
+#include "camel/meta.h"
+#include "fmt/core.h"
+#include "zstd.h"
 
 namespace camel::detail {
 
-constexpr auto kLibBufferCapacity = 1U << 18U;
-
-struct GzFileDeleter {
-  auto operator()(gzFile file_pr) const noexcept -> void { gzclose(file_pr); }
-};
-
-using GzFileHandle = std::unique_ptr<gzFile_s, GzFileDeleter>;
+constexpr auto kLibBufferCapacity = 1U << 22U;
 
 BinaryOutBuffer::BinaryOutBuffer(std::size_t capacity) {
   buffer_.reserve(capacity);
@@ -41,32 +40,42 @@ auto BinaryInBuffer::ShiftPos(std::size_t const n_bytes) -> void {
   pos_ += n_bytes;
 }
 
-auto GzStoreBytes(std::vector<std::byte> const& bytes,
-                  std::filesystem::path const& path) -> void {
-  if (std::filesystem::exists(path.parent_path())) {
+auto CompressToFile(std::vector<std::byte> const& bytes,
+                    std::filesystem::path const& path) -> void {
+  auto dst_fstrm =
+      std::fstream(path, std::ios::out | std::ios::binary | std::ios::trunc);
+
+  auto compress_buff = std::vector<std::byte>(bytes.size());
+  auto const compress_status =
+      ZSTD_compress(compress_buff.data(), compress_buff.size(), bytes.data(),
+                    bytes.size(), 5U);
+
+  if (ZSTD_isError(compress_status)) {
+    throw std::runtime_error("[camel::CompressToFile] failed to compress " +
+                             path.string());
   }
-  auto dst_file = GzFileHandle(gzopen(path.c_str(), "wb"));
-  gzwrite(dst_file.get(), bytes.data(),
-          static_cast<std::uint32_t>(bytes.size()));
+
+  dst_fstrm.write(BitCast<char const*>(compress_buff.data()), compress_status);
 }
 
-auto GzLoadBytes(std::filesystem::path const& path) -> std::vector<std::byte> {
-  auto dst = std::vector<std::byte>();
-  auto src_file = GzFileHandle(gzopen(path.c_str(), "rb"));
-  gzbuffer(src_file.get(), kLibBufferCapacity);
+auto DecompressFromFile(std::filesystem::path const& path)
+    -> std::vector<std::byte> {
+  auto in_buff = std::vector<std::byte>(std::filesystem::file_size(path));
+  auto src_fstrm = std::fstream(path, std::ios::in | std::ios::binary);
 
-  auto buffer = std::vector<std::byte>(kLibBufferCapacity);
-  while (true) {
-    auto const n_read =
-        gzread(src_file.get(), buffer.data(), kLibBufferCapacity);
+  src_fstrm.read(BitCast<char*>(in_buff.data()), in_buff.size());
 
-    // TODO: could be better
-    std::copy(buffer.begin(), std::next(buffer.begin(), n_read),
-              std::back_inserter(dst));
+  // TODO: make more robust to errors
+  auto const decom_sz =
+      ZSTD_getFrameContentSize(in_buff.data(), in_buff.size());
+  auto dst = std::vector<std::byte>(decom_sz);
 
-    if (static_cast<std::uint32_t>(n_read) < buffer.size()) {
-      break;
-    }
+  auto decompress_status =
+      ZSTD_decompress(dst.data(), dst.size(), in_buff.data(), in_buff.size());
+
+  if (ZSTD_isError(decompress_status)) {
+    throw std::runtime_error("[camel::DecompressToFile] failed to decompress " +
+                             path.string());
   }
 
   return dst;
