@@ -15,7 +15,7 @@ namespace camel {
 
 namespace detail {
 
-static constexpr std::size_t kAlignBatchCap = 1UL << 32UL;  // ~4gb
+static constexpr std::size_t kAlignBatchCap = 1UL << 36UL;  // ~68gb
 
 }  // namespace detail
 
@@ -24,7 +24,6 @@ auto CalculateCoverage(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& pile_storage_dir) -> void {
   auto ovlps = FindOverlaps(thread_pool, map_cfg, seqs);
-
   if (std::filesystem::exists(pile_storage_dir)) {
     std::filesystem::remove_all(pile_storage_dir);
   }
@@ -38,6 +37,13 @@ auto CalculateCoverage(
     for (auto batch_sz = 0UL; curr_idx < end_idx && batch_sz < batch_cap;
          ++curr_idx) {
       batch_sz += seqs[curr_idx]->inflated_len * sizeof(Coverage);
+      batch_sz += std::transform_reduce(
+          ovlps[curr_idx].cbegin(), ovlps[curr_idx].cend(), 0UL,
+          std::plus<std::size_t>(),
+          [](biosoup::Overlap const& ovlp) -> std::size_t {
+            // lhs str, rhs str, edlib memory -> reasoning behing 3x
+            return 3UL * detail::OverlapLength(ovlp);
+          });
     }
 
     return curr_idx;

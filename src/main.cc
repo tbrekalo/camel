@@ -23,13 +23,18 @@ auto main(int argc, char** argv) -> int {
       cxxopts::Options("camel", "Camel is haplotype aware detection tool");
   options.add_options()("t,threads", "number of threads avalable for execution",
                         cxxopts::value<std::uint32_t>())(
+      "s,serialization_dst", "destination folder for pile serialization",
+      cxxopts::value<std::string>())(
       "paths", "input fastq reads", cxxopts::value<std::vector<std::string>>());
-
   options.parse_positional("paths");
+
   auto const result = options.parse(argc, argv);
 
   auto thread_pool = std::make_shared<thread_pool::ThreadPool>(
       result["threads"].as<std::uint32_t>());
+
+  auto ser_dst_path =
+      std::filesystem::path(result["serialization_dst"].as<std::string>());
 
   auto paths = std::vector<std::filesystem::path>();
   auto paths_strs = result["paths"].as<std::vector<std::string>>();
@@ -48,8 +53,7 @@ auto main(int argc, char** argv) -> int {
              reads.size());
   timer.Start();
 
-  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads,
-                           "/storage2/tbrekalo/drosophila/a4_full_coverage");
+  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, ser_dst_path);
   timer.Stop();
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
