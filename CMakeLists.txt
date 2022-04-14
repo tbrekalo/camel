@@ -13,12 +13,24 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
+# get conan
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
+  message(STATUS "Downloading conan.cmake from https://github.com/conan-io/cmake-conan")
+  file(DOWNLOAD "https://raw.githubusercontent.com/conan-io/cmake-conan/develop/conan.cmake"
+  "${CMAKE_BINARY_DIR}/conan.cmake"
+                TLS_VERIFY ON)
+endif()
+
 # includes
 include(cmake/Warnings.cmake)
 include(GenerateExportHeader)
 include(FetchContent)
 
-# SKBUILD
+include(${CMAKE_BINARY_DIR}/conan.cmake)
+
+# prepend conan path
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR})
+list(APPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 
 # options
 option(CAMEL_BUILD_SHARED_LIBS "Build camel and it's dependencies as shared lib" OFF)
@@ -52,6 +64,25 @@ if (CAMEL_BUILD_SHARED_LIBS)
   set(BUILD_SHARED_LIBS ON) 
 endif ()
 
+conan_cmake_configure(
+  REQUIRES 
+    cxxopts/3.0.0 
+    fmt/8.1.1
+    zstd/1.5.2
+  GENERATORS 
+    cmake_find_package_multi)
+
+foreach(TYPE ${CMAKE_CONFIGURATION_TYPES})
+    conan_cmake_autodetect(settings BUILD_TYPE ${TYPE})
+    conan_cmake_install(PATH_OR_REFERENCE .
+                        BUILD missing
+                        REMOTE conancenter
+                        SETTINGS ${settings})
+endforeach()
+
+find_package(fmt CONFIG)
+find_package(zstd CONFIG)
+
 FetchContent_Declare(
   bioparser
   GIT_REPOSITORY https://github.com/rvaser/bioparser
@@ -68,11 +99,6 @@ FetchContent_Declare(
   GIT_TAG v1.2.7)
 
 FetchContent_Declare(
-  fmt
-  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 8.1.1)
-
-FetchContent_Declare(
   ram
   GIT_REPOSITORY https://github.com/lbcb-sci/ram
   GIT_TAG 2.1.1)
@@ -82,7 +108,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/rvaser/thread_pool.git
   GIT_TAG 4.0.0)
 
-FetchContent_MakeAvailable(bioparser biosoup edlib fmt thread_pool ram)
+FetchContent_MakeAvailable(bioparser biosoup edlib ram thread_pool)
 
 # create main target
 set(camel_SOURCES
@@ -106,7 +132,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    bioparser edlib fmt ram)
+    bioparser edlib fmt::fmt ram zstd::zstd)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
@@ -124,17 +150,13 @@ target_compile_definitions(camel PUBLIC
 target_include_directories(camel PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>")
 
-if (CAMEL_BUILD_EXE)
-  FetchContent_Declare(
-    cxxopts
-    GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
-    GIT_TAG v3.0.0)
-    FetchContent_MakeAvailable(cxxopts)
- 
+if (CAMEL_BUILD_EXE) 
+  find_package(cxxopts CONFIG)
+
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe
     PRIVATE 
-      camel cxxopts fmt)
+      camel cxxopts::cxxopts fmt::fmt)
 endif ()
 
 if (CAMEL_BUILD_PYTHON)

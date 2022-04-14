@@ -20,7 +20,7 @@ CAMEL_EXPORT struct MapCfg {
 
   std::uint8_t kmer_len = 15;
   std::uint8_t win_len = 5;
-  double filter_p = 0.01;
+  double filter_p = 0.001;
 };
 
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(

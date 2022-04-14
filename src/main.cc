@@ -46,8 +46,13 @@ auto main(int argc, char** argv) -> int {
   auto const reads = camel::LoadSequences(thread_pool, paths);
   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
              reads.size());
+  timer.Start();
 
-  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, "./data");
+  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads,
+                           "/storage2/tbrekalo/drosophila/a4_full_coverage");
+  timer.Stop();
+
+  fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
 
   return EXIT_SUCCESS;
 }
