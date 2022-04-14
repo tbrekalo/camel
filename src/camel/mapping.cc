@@ -64,7 +64,7 @@ auto FindOverlaps(
         find_batch_end(minimize_batch_begin, seqs.size(), kMinimizeBatchCap);
 
     minimizer_engine.Minimize(std::next(seqs.begin(), minimize_batch_begin),
-                              std::next(seqs.begin(), minimize_batch_end));
+                              std::next(seqs.begin(), minimize_batch_end), true);
 
     minimizer_engine.Filter(map_cfg.filter_p);
 
