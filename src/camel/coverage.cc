@@ -15,8 +15,8 @@ namespace camel {
 
 namespace detail {
 
-static constexpr std::size_t kAlignBatchCap = 1UL << 36UL;  // ~68.7gb
-static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL; // 4.3gb
+static constexpr std::size_t kAlignBatchCap = 1UL << 36UL;      // ~68.7gb
+static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL;  // 4.3gb
 
 }  // namespace detail
 
@@ -24,36 +24,20 @@ auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& pile_storage_dir) -> void {
-  auto ovlps =
-      FindOverlaps(thread_pool, map_cfg, seqs, detail::kDefaultSeqGroupSz);
+  auto ovlps = FindOverlaps(thread_pool, map_cfg, seqs);
   if (std::filesystem::exists(pile_storage_dir)) {
     std::filesystem::remove_all(pile_storage_dir);
   }
 
-  // std::filesystem::create_directory(pile_storage_dir);
-
-  // auto const find_batch_end =
-  //     [&seqs, &ovlps](std::size_t const begin_idx, std::size_t const end_idx,
-  //                     std::size_t const batch_cap) -> std::size_t {
-  //   auto curr_idx = begin_idx;
-  //   for (auto batch_sz = 0UL; curr_idx < end_idx && batch_sz < batch_cap;
-  //        ++curr_idx) {
-  //     batch_sz += seqs[curr_idx]->inflated_len * sizeof(Coverage);
-  //     batch_sz += std::transform_reduce(
-  //         ovlps[curr_idx].cbegin(), ovlps[curr_idx].cend(), 0UL,
-  //         std::plus<std::size_t>(),
-  //         [](biosoup::Overlap const& ovlp) -> std::size_t {
-  //           // lhs str, rhs str, edlib memory -> reasoning behing 3x
-  //           return 3UL * detail::OverlapLength(ovlp);
-  //         });
-  //   }
+  std::filesystem::create_directory(pile_storage_dir);
 
   //   return curr_idx;
   // };
 
   // auto const overlap_strings =
   //     [&seqs](
-  //         biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
+  //         biosoup::Overlap const& ovlp) -> std::pair<std::string,
+  //         std::string> {
   //   auto query_str = seqs[ovlp.lhs_id]->InflateData(
   //       ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
 
@@ -88,11 +72,13 @@ auto CalculateCoverage(
   //            .seq_name = seq->name,
   //            .covgs = std::vector<Coverage>(
   //                seq->inflated_len,
-  //                Coverage{.a = 0, .c = 0, .g = 0, .t = 0, .del = 0, .ins = 0})};
+  //                Coverage{.a = 0, .c = 0, .g = 0, .t = 0, .del = 0, .ins =
+  //                0})};
 
   //   for (auto const& ovlp : ovlps) {
   //     auto [query_substr, target_substr] = overlap_strings(ovlp);
-  //     auto const edlib_res_align = align_strings(query_substr, target_substr);
+  //     auto const edlib_res_align = align_strings(query_substr,
+  //     target_substr);
 
   //     query_substr.clear();
   //     query_substr.shrink_to_fit();
@@ -165,11 +151,13 @@ auto CalculateCoverage(
 
   //   auto pile_futures = std::vector<std::future<Pile>>();
   //   auto serialize_futures = std::deque<std::future<
-  //       std::tuple<std::filesystem::path, std::size_t, std::size_t, double>>>();
+  //       std::tuple<std::filesystem::path, std::size_t, std::size_t,
+  //       double>>>();
 
   //   auto is_ser_future_ready =
   //       [](decltype(serialize_futures)::const_reference f) -> bool {
-  //     return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+  //     return f.wait_for(std::chrono::seconds(0)) ==
+  //     std::future_status::ready;
   //   };
 
   //   auto pop_and_report = [&serialize_futures]() -> void {
@@ -183,12 +171,12 @@ auto CalculateCoverage(
   //                comp_time, dst_file.string(), 1. * raw_sz / com_sz);
   //   };
 
-
   //   for (auto covg_batch_begin = 0UL, batch_id = 0UL;
   //        covg_batch_begin < seqs.size(); ++batch_id) {
   //     timer.Start();
   //     auto const covg_batch_end =
-  //         find_batch_end(covg_batch_begin, seqs.size(), detail::kAlignBatchCap);
+  //         find_batch_end(covg_batch_begin, seqs.size(),
+  //         detail::kAlignBatchCap);
 
   //     auto const batch_n_seqs = covg_batch_end - covg_batch_begin;
   //     pile_futures.reserve(batch_n_seqs);
@@ -202,7 +190,8 @@ auto CalculateCoverage(
   //     std::transform(std::next(seqs.begin(), covg_batch_begin),
   //                    std::next(seqs.begin(), covg_batch_end),
   //                    std::next(ovlps.begin(), covg_batch_begin),
-  //                    std::back_inserter(pile_futures), async_calc_coverage_for);
+  //                    std::back_inserter(pile_futures),
+  //                    async_calc_coverage_for);
 
   //     fmt::print(stderr,
   //                "[camel::CalculateCoverage] calculating coverage "
@@ -240,7 +229,8 @@ auto CalculateCoverage(
   //                        pile.covgs.size() * sizeof(Coverage);
   //               });
 
-  //           auto const compressed_bytes = std::filesystem::file_size(dst_file);
+  //           auto const compressed_bytes =
+  //           std::filesystem::file_size(dst_file);
 
   //           return std::make_tuple(std::move(dst_file), uncompressed_bytes,
   //                                  compressed_bytes, ser_timer.Stop());

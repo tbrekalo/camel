@@ -58,19 +58,14 @@ auto main(int argc, char** argv) -> int {
 
   timer.Start();
   auto ovlp_groups =
-      camel::FindOverlaps(thread_pool, camel::MapCfg{}, reads, 1UL << 32UL);
+      camel::FindOverlaps(thread_pool, camel::MapCfg{}, reads);
   timer.Stop();
 
-  timer.Start();
-  for (auto& ovlp_group : ovlp_groups) {
-    std::transform(ovlp_group.ovlps.begin(), ovlp_group.ovlps.end(),
-                   ovlp_group.ovlps.begin(), camel::detail::ReverseOverlap);
-  }
-  fmt::print(stderr, "[camel]({:12.3f}) reversed overlaps\n", timer.Stop());
-  // camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads,
-  // ser_dst_path); timer.Stop();
+  // timer.Start();
+  // camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, ser_dst_path);
+  // timer.Stop();
 
-  // fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
+  fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
 
   return EXIT_SUCCESS;
 }
