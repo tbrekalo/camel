@@ -23,10 +23,17 @@ CAMEL_EXPORT struct MapCfg {
   double filter_p = 0.001;
 };
 
+CAMEL_EXPORT struct OverlapGroup {
+  std::uint32_t first_seq_id;
+  std::uint32_t last_seq_id;
+  std::vector<biosoup::Overlap> ovlps;
+};
+
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs)
-    -> std::vector<std::vector<biosoup::Overlap>>;
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs, 
+    std::size_t const target_group_sz)
+    -> std::vector<OverlapGroup>;
 
 }  // namespace camel
 
