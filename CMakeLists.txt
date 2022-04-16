@@ -69,6 +69,7 @@ conan_cmake_configure(
     cxxopts/3.0.0 
     fmt/8.1.1
     mimalloc/2.0.3
+    tsl-robin-map/1.0.1
     zstd/1.5.2
   GENERATORS 
     cmake_find_package_multi)
@@ -82,6 +83,7 @@ foreach(TYPE ${CMAKE_CONFIGURATION_TYPES})
 endforeach()
 
 find_package(fmt CONFIG)
+find_package(tsl-robin-map CONFIG)
 find_package(zstd CONFIG)
 
 FetchContent_Declare(
@@ -133,7 +135,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    bioparser edlib fmt::fmt ram zstd::zstd)
+    bioparser edlib fmt::fmt ram tsl::robin_map zstd::zstd)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
