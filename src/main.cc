@@ -10,15 +10,15 @@
 
 #include "biosoup/timer.hpp"
 #include "camel/coverage.h"
+#include "camel/detail/overlap.h"
 #include "camel/io.h"
 #include "camel/mapping.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
-#include "thread_pool/thread_pool.hpp"
-
 #include "mimalloc-new-delete.h"
 #include "mimalloc-override.h"
 #include "mimalloc.h"
+#include "thread_pool/thread_pool.hpp"
 
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
 
@@ -55,12 +55,22 @@ auto main(int argc, char** argv) -> int {
   auto const reads = camel::LoadSequences(thread_pool, paths);
   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
              reads.size());
-  timer.Start();
 
-  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, ser_dst_path);
+  timer.Start();
+  auto ovlp_groups =
+      camel::FindOverlaps(thread_pool, camel::MapCfg{}, reads, 1UL << 32UL);
   timer.Stop();
 
-  fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
+  timer.Start();
+  for (auto& ovlp_group : ovlp_groups) {
+    std::transform(ovlp_group.ovlps.begin(), ovlp_group.ovlps.end(),
+                   ovlp_group.ovlps.begin(), camel::detail::ReverseOverlap);
+  }
+  fmt::print(stderr, "[camel]({:12.3f}) reversed overlaps\n", timer.Stop());
+  // camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads,
+  // ser_dst_path); timer.Stop();
+
+  // fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
 
   return EXIT_SUCCESS;
 }
