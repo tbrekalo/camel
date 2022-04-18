@@ -25,38 +25,45 @@ enum class OverlapType : std::uint8_t {
  * @brief concept for overlap filter callable:
  *         Filter(biosoup::Overlap const&) -> bool;
  */
-template <class Impl, class = std::void_t<>>
-struct OverlapFilterConcept : std::false_type {};
-
-template <class Impl>
-struct OverlapFilterConcept<Impl,
-                            std::void_t<decltype(std::declval<Impl>()(
-                                std::declval<biosoup::Overlap const&>()))>>
-    : std::is_invocable_r<bool, Impl, biosoup::Overlap const&> {};
+template <class T>
+using IsOverlapFilter =
+  std::is_invocable_r<bool, T, biosoup::Overlap const&>;
 
 /**
- * @brief helper for @ref OverlapFilterConcept
+ * @brief helper for @ref IsOverlapFilter
  */
 template <class T>
-bool constexpr IsOverlapFilerV = OverlapFilterConcept<T>::value;
+inline bool constexpr IsOverlapFilerV = IsOverlapFilter<T>::value;
+
+/**
+ * @brief concept for overlap compare callable:
+ *         OvlpCmp(biosoup::Overlap const&, biosoup::Overlap const&) -> bool 
+ */
+template <class T>
+using IsOverlapCmpCallable =
+    std::is_invocable_r<bool, T, biosoup::Overlap const&,
+                        biosoup::Overlap const&>;
+
+/**
+ * @brief helper for @ref IsOverlapCmpCallable
+ */
+template <class T>
+inline bool constexpr IsOverlapCmpCallableV =
+  IsOverlapCmpCallable<T>::value;
 
 /**
  * @brief concept for overlap sink callable:
  *          Sink(biosoup::Overlap const&) -> void;
  */
-template <class Impl, class = std::void_t<>>
-struct OverlapSinkConcept : std::false_type {};
-
-template <class Impl>
-struct OverlapSinkConcept<Impl, std::void_t<decltype(std::declval<Impl>()(
-                                    std::declval<biosoup::Overlap const&>()))>>
-    : std::is_invocable_r<void, Impl, biosoup::Overlap const&> {};
+template <class T>
+using IsOverlapSink = std::is_invocable_r<void, T, biosoup::Overlap const&>;
 
 /**
- * @brief helper for @ref OverlapSinkConcept
+ * @brief helper for @ref IsOverlapSink
  */
 template <class T>
-bool constexpr IsOverlapSinkV = OverlapSinkConcept<T>::value;
+inline bool constexpr IsOverlapSinkV = IsOverlapSink<T>::value;
+
 
 /**
  * @brief Determine overlap type provided origin sequence length information
