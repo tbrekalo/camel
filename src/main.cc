@@ -56,8 +56,12 @@ auto main(int argc, char** argv) -> int {
   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
              reads.size());
 
+  // timer.Start();
+  // camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, ser_dst_path);
+  // timer.Stop();
+
   timer.Start();
-  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, ser_dst_path);
+  auto const ovlp_groups = camel::FindOverlaps(thread_pool, camel::MapCfg{}, reads);
   timer.Stop();
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());

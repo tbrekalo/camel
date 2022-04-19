@@ -19,7 +19,7 @@ namespace detail {
 
 static constexpr auto kMinimizeBatchCap = 1UL << 32UL;
 static constexpr auto kMapBatchCap = 1UL << 30UL;
-static constexpr auto kOvlpBlockCap = static_cast<std::size_t>(2e6);
+static constexpr auto kOvlpBlockCap = 1UL << 16UL;
 
 }  // namespace detail
 
@@ -29,10 +29,19 @@ MapCfg::MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p)
 auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<std::vector<biosoup::Overlap>> {
+    -> std::vector<Group> {
+  auto dst = std::vector<Group>();
+
   auto group_ids = std::vector<std::uint32_t>(reads.size());
   auto group_sizes = std::vector<std::uint32_t>(reads.size());
   std::iota(group_ids.begin(), group_ids.end(), 0U);
+
+  auto read_ovlp_cnt = std::vector<std::size_t>(reads.size(), 0U);
+  auto read_ovlp_vecs = std::vector<std::vector<std::vector<biosoup::Overlap>>>(
+      reads.size(), std::vector<std::vector<biosoup::Overlap>>());
+  for (auto& it : read_ovlp_vecs) {
+    it.emplace_back();
+  }
 
   auto group_ovlp_cnt = std::vector<std::uint64_t>(reads.size());
 
@@ -40,11 +49,6 @@ auto FindOverlaps(
       ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
 
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
-
-  auto ovlp_blocks = std::vector<std::vector<biosoup::Overlap>>();
-
-  ovlp_blocks.emplace_back();
-  ovlp_blocks.back().reserve(detail::kOvlpBlockCap);
 
   auto find_group_id =
       [&group_ids](std::uint32_t const read_id) -> std::uint32_t {
@@ -99,17 +103,21 @@ auto FindOverlaps(
   };
 
   auto const store_overlap =
-      [&ovlp_blocks](biosoup::Overlap const& ovlp) -> void {
-    if (ovlp_blocks.back().size() == detail::kOvlpBlockCap) {
-      if (ovlp_blocks.size() == ovlp_blocks.capacity()) {
-        ovlp_blocks.reserve(ovlp_blocks.capacity() * 1.25);
+      [&read_ovlp_cnt, &read_ovlp_vecs](biosoup::Overlap const& ovlp) -> void {
+    auto const query_id = ovlp.lhs_id;
+    auto const target_id = ovlp.rhs_id;
+    auto& ovlp_vec = read_ovlp_vecs[query_id];
+    if (ovlp_vec.back().size() == detail::kOvlpBlockCap) {
+      if (ovlp_vec.size() == ovlp_vec.capacity()) {
+        ovlp_vec.reserve(ovlp_vec.size() * 1.2);
       }
 
-      ovlp_blocks.emplace_back();
-      ovlp_blocks.reserve(detail::kOvlpBlockCap);
+      ovlp_vec.emplace_back();
     }
 
-    ovlp_blocks.back().push_back(ovlp);
+    ovlp_vec.back().push_back(ovlp);
+    ++read_ovlp_cnt[query_id];
+    ++read_ovlp_cnt[target_id];
   };
 
   auto const find_batch_last =
@@ -183,7 +191,6 @@ auto FindOverlaps(
   }
 
   // group overlaps in groups
-  auto group_overlaps = std::vector<std::vector<biosoup::Overlap>>();
   {
     timer.Start();
 
@@ -197,11 +204,9 @@ auto FindOverlaps(
     auto group_id_to_handle = tsl::robin_map<std::uint32_t, std::uint32_t>();
     group_id_to_handle.reserve(n_groups);
 
-    for (auto read_id = 0U, h_id = 0U; read_id < reads.size(); ++read_id) {
-      auto const g_id = find_group_id(read_id);
-      auto const& g_handle = group_id_to_handle[g_id];
-      if (g_handle == 0) {
-        group_id_to_handle.emplace(g_id, h_id++);
+    for (auto g_id = 0U, g_handle = 0U; g_id < reads.size(); ++g_id) {
+      if (group_sizes[g_id] > 0) {
+        group_id_to_handle.emplace(g_id, g_handle++);
       }
     }
 
@@ -210,134 +215,38 @@ auto FindOverlaps(
                timer.Stop(), group_id_to_handle.size());
 
     timer.Start();
-    auto sort_futures =
-        std::vector<std::future<std::vector<std::vector<biosoup::Overlap>>>>();
-    sort_futures.reserve(ovlp_blocks.size());
+    dst.resize(n_groups);
+    for (auto read_id = 0U; read_id < reads.size(); ++read_id) {
+      auto h_id = group_id_to_handle[find_group_id(read_id)];
+      auto read_ovlp_vec = std::move(read_ovlp_vecs[read_id]);
 
-    // initial groupings
-    for (auto& ovlp_block : ovlp_blocks) {
-      sort_futures.emplace_back(thread_pool->Submit(
-          [&group_ids, &group_id_to_handle,
-           ovlp_vec = std::move(ovlp_block)](std::size_t const n_groups) mutable
-          -> std::vector<std::vector<biosoup::Overlap>> {
-            auto dst = std::vector<std::vector<biosoup::Overlap>>(
-                n_groups, std::vector<biosoup::Overlap>());
-            for (auto const& it : ovlp_vec) {
-              dst[group_id_to_handle[group_ids[it.lhs_id]]].push_back(it);
-            }
+      read_ovlp_vec.back().shrink_to_fit();
 
-            ovlp_vec.clear();
-            ovlp_vec.shrink_to_fit();
+      std::move(read_ovlp_vec.begin(), read_ovlp_vec.end(),
+                std::back_inserter(dst[h_id].ovlp_vecs));
 
-            return dst;
-          },
-          n_groups));
-    }
-
-    auto task_pack_queue =
-        std::deque<std::vector<std::vector<biosoup::Overlap>>>();
-
-    for (auto& it : sort_futures) {
-      task_pack_queue.push_back(it.get());
-    }
-
-    fmt::print(
-        stderr,
-        "[camel::FindOverlaps]({:12.3f}) sorted initial {} overlap blocks\n",
-        timer.Stop(), task_pack_queue.size());
-
-    timer.Start();
-
-    sort_futures.clear();
-    while (true) {
-      while (task_pack_queue.size() >= 2) {
-        auto lhs_vec = std::move(task_pack_queue.front());
-        task_pack_queue.pop_front();
-
-        auto rhs_vec = std::move(task_pack_queue.front());
-        task_pack_queue.pop_front();
-
-        sort_futures.emplace_back(
-            thread_pool->Submit([lhs_ovlps = std::move(lhs_vec),
-                                 rhs_ovlps = std::move(rhs_vec)]() mutable
-                                -> std::vector<std::vector<biosoup::Overlap>> {
-              auto dst = std::vector<std::vector<biosoup::Overlap>>();
-              dst.reserve(lhs_ovlps.size());
-
-              for (auto idx = 0U; idx < lhs_ovlps.size(); ++idx) {
-                if (lhs_ovlps[idx].size() < rhs_ovlps[idx].size()) {
-                  std::swap(lhs_ovlps[idx], rhs_ovlps[idx]);
-                }
-
-                lhs_ovlps[idx].reserve(lhs_ovlps[idx].size() +
-                                       rhs_ovlps[idx].size());
-
-                std::copy(rhs_ovlps[idx].cbegin(), rhs_ovlps[idx].cend(),
-                          std::back_inserter(lhs_ovlps[idx]));
-
-                dst.push_back(std::move(lhs_ovlps[idx]));
-
-                rhs_ovlps[idx].clear();
-                rhs_ovlps[idx].shrink_to_fit();
-              }
-
-              lhs_ovlps.clear();
-              lhs_ovlps.shrink_to_fit();
-
-              rhs_ovlps.clear();
-              rhs_ovlps.shrink_to_fit();
-
-              return dst;
-            }));
-      }
-
-      for (auto& it : sort_futures) {
-        task_pack_queue.push_back(it.get());
-      }
-
-      sort_futures.clear();
-
-      if (task_pack_queue.size() == 1UL) {
-        group_overlaps = std::move(task_pack_queue.front());
-        break;
+      if (read_id % 20000U == 0U) {
+        fmt::print(stderr, "distrubuted {:12d} / {:12d} read overlap vecs\r",
+                   read_id, reads.size());
       }
     }
-
-    // group_overlaps.resize(n_groups);
-    // auto progress_bar = biosoup::ProgressBar(ovlp_buff_blocks.size(), 10U);
-    // for (auto block_id = 0U; block_id < ovlp_buff_blocks.size(); ++block_id)
-    // {
-    //   auto& ovlp_vec = ovlp_buff_blocks[block_id];
-    //   for (auto const& ovlp : ovlp_vec) {
-    //     auto const g_id = find_group_id(ovlp.lhs_id);
-    //     auto const g_handle = group_id_to_handle[g_id];
-
-    //     if (group_overlaps[g_handle].size() ==
-    //         group_overlaps[g_handle].capacity()) {
-    //       auto const g_ovlp_cnt = group_ovlp_cnt[g_id];
-    //       if (group_overlaps[g_handle].capacity() * 1.26 < g_ovlp_cnt) {
-    //         group_overlaps[g_handle].reserve(group_overlaps.capacity()
-    //         * 1.25);
-    //       } else {
-    //         group_overlaps[g_handle].reserve(g_ovlp_cnt);
-    //       }
-    //     }
-
-    //     group_overlaps[g_handle].push_back(ovlp);
-    //   }
-
-    //   ovlp_vec.clear();
-    //   ovlp_vec.shrink_to_fit();
-
-    //   ++progress_bar;
-    //   fmt::print("{}\r", progress_bar);
-    // }
 
     auto group_seq_sizes = std::vector<std::uint64_t>(n_groups);
     for (auto read_id = 0U; read_id < reads.size(); ++read_id) {
       auto const g_id = find_group_id(read_id);
       auto const g_handle = group_id_to_handle[g_id];
       group_seq_sizes[g_handle] += reads[read_id]->inflated_len;
+    }
+
+    for (auto const& it : group_id_to_handle) {
+      dst[it.second].read_n_ovlps.reserve(group_sizes[it.first]);
+      dst[it.second].ovlp_vecs.shrink_to_fit();
+    }
+
+    for (auto read_id = 0U; read_id < reads.size(); ++read_id) {
+      auto const g_handle = group_id_to_handle[find_group_id(read_id)];
+      dst[g_handle].read_n_ovlps.push_back(ReadIdOvlpCnt{
+          .read_id = read_id, .n_overlaps = read_ovlp_cnt[read_id]});
     }
 
     fmt::print(
@@ -350,7 +259,7 @@ auto FindOverlaps(
   }
 
   fmt::print(stderr, "[camel::FindOverlaps]({:12.3f})\n", timer.elapsed_time());
-  return group_overlaps;
+  return dst;
 }
 
 }  // namespace camel
