@@ -1,6 +1,8 @@
 #ifndef CAMEL_MAPPING_H_
 #define CAMEL_MAPPING_H_
 
+
+#include <utility>
 #include <memory>
 #include <vector>
 
@@ -23,11 +25,20 @@ CAMEL_EXPORT struct MapCfg {
   double filter_p = 0.001;
 };
 
+CAMEL_EXPORT struct ReadIdOvlpCnt {
+  std::uint32_t read_id;
+  std::size_t n_overlaps;
+};
+
+CAMEL_EXPORT struct Group {
+  std::vector<ReadIdOvlpCnt> read_n_ovlps;
+  std::vector<std::vector<biosoup::Overlap>> ovlp_vecs;
+};
 
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<std::vector<biosoup::Overlap>>;
+    -> std::vector<Group>;
 
 }  // namespace camel
 
