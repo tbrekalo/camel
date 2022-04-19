@@ -10,6 +10,8 @@
 #include "detail/overlap.h"
 #include "edlib.h"
 #include "fmt/core.h"
+#include "tsl/robin_map.h"
+#include "tsl/robin_set.h"
 
 namespace camel {
 
@@ -22,230 +24,129 @@ static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL;  // 4.3gb
 
 auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     std::filesystem::path const& pile_storage_dir) -> void {
-  auto ovlps = FindOverlaps(thread_pool, map_cfg, seqs);
+  auto ovlp_groups = FindOverlaps(thread_pool, map_cfg, reads);
   if (std::filesystem::exists(pile_storage_dir)) {
     std::filesystem::remove_all(pile_storage_dir);
   }
 
   std::filesystem::create_directory(pile_storage_dir);
+  auto timer = biosoup::Timer();
 
-  //   return curr_idx;
+  // sort groups ascending by read size
+  {
+    auto group_with_sizes =
+        std::vector<std::pair<std::size_t, std::vector<biosoup::Overlap>>>();
+
+    auto const calc_group_sz =
+        [&reads](
+            std::vector<biosoup::Overlap>::const_iterator first,
+            std::vector<biosoup::Overlap>::const_iterator last) -> std::size_t {
+      auto unique_read_ids = tsl::robin_set<std::size_t>();
+      for (auto it = first; it != last; ++it) {
+        unique_read_ids.insert(it->lhs_id);
+        unique_read_ids.insert(it->rhs_id);
+      }
+
+      return std::transform_reduce(
+          unique_read_ids.cbegin(), unique_read_ids.cend(), 0UL,
+          std::plus<std::size_t>(),
+          [&reads](std::uint32_t const read_id) -> std::size_t {
+            return reads[read_id]->inflated_len;
+          });
+    };
+
+    timer.Start();
+
+    group_with_sizes.reserve(ovlp_groups.size());
+    std::transform(
+        std::make_move_iterator(ovlp_groups.begin()),
+        std::make_move_iterator(ovlp_groups.end()),
+        std::back_inserter(group_with_sizes),
+        [&calc_group_sz](std::vector<biosoup::Overlap> ovlps)
+            -> std::pair<std::size_t, std::vector<biosoup::Overlap>> {
+          return std::pair(calc_group_sz(ovlps.cbegin(), ovlps.cend()),
+                           std::move(ovlps));
+        });
+
+    ovlp_groups.clear();
+    std::sort(
+        group_with_sizes.begin(), group_with_sizes.end(),
+        [](std::pair<std::size_t, std::vector<biosoup::Overlap>> const& lhs,
+           std::pair<std::size_t, std::vector<biosoup::Overlap>> const& rhs)
+            -> bool { return lhs.first < rhs.first; });
+
+    std::transform(
+        std::make_move_iterator(group_with_sizes.begin()),
+        std::make_move_iterator(group_with_sizes.end()),
+        std::back_inserter(ovlp_groups),
+        [](std::pair<std::size_t, std::vector<biosoup::Overlap>> pso)
+            -> std::vector<biosoup::Overlap> { return std::move(pso.second); });
+
+    fmt::print(
+        stderr,
+        "[camel::CalculateCoverage]({:12.3f}) sorted overlap groups by size\n",
+        timer.Stop());
+  }
+
+  // auto group_sort_futures = std::vector<std::future<void>>();
+
+  // auto const ovlp_cmp_by_lhs_id = [](biosoup::Overlap const& a,
+  //                                    biosoup::Overlap const& b) {
+  //   return a.lhs_id < b.rhs_id;
   // };
 
-  // auto const overlap_strings =
-  //     [&seqs](
-  //         biosoup::Overlap const& ovlp) -> std::pair<std::string,
-  //         std::string> {
-  //   auto query_str = seqs[ovlp.lhs_id]->InflateData(
-  //       ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
+  // auto const sort_ovlp_range =
+  //     [](std::vector<biosoup::Overlap>::const_iterator first,
+  //        std::vector<biosoup::Overlap>::const_iterator last,
+  //        auto&& ovlp_cmp_fn) -> void {
+  //   static_assert(
+  //       detail::IsOverlapCmpCallableV<decltype(ovlp_cmp_fn)>,
+  //       "[camel::FindOverlaps::sort_ovlp_range] ovlp_cmp_fn must be callable"
+  //       "with signature (biosoup::Overlap const&, biosoup::Overlap const&) ->
+  //       " "bool");
 
-  //   auto target_str = seqs[ovlp.rhs_id]->InflateData(
-  //       ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
-
-  //   if (!ovlp.strand) {
-  //     auto rc = biosoup::NucleicAcid("", target_str);
-  //     rc.ReverseAndComplement();
-
-  //     target_str = rc.InflateData();
-  //   }
-
-  //   return std::make_pair(std::move(query_str), std::move(target_str));
+  //   std::sort(first, last, std::forward<decltype(ovlp_cmp_fn)>(ovlp_cmp_fn));
   // };
 
-  // auto const align_strings =
-  //     [](std::string const& query_str,
-  //        std::string const& target_str) -> EdlibAlignResult {
-  //   return edlibAlign(
-  //       query_str.c_str(), query_str.size(), target_str.c_str(),
-  //       target_str.size(),
-  //       edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
+  auto active_piles = tsl::robin_map<std::uint32_t, Pile>();
+
+  auto const try_init_pile =
+      [&active_piles](
+          std::unique_ptr<biosoup::NucleicAcid> const& read) -> void {
+    auto& read_pile = active_piles[read->id];
+    if (read_pile.seq_name.empty()) {
+      read_pile.id = read->id;
+      read_pile.seq_name = read->name;
+      read_pile.covgs.resize(read->inflated_len);
+    }
+  };
+
+  auto const refresh_active_piles =
+      [&reads, &active_piles, &try_init_pile](
+          std::vector<biosoup::Overlap>::const_iterator first,
+          std::vector<biosoup::Overlap>::const_iterator last) -> void {
+    active_piles.clear();
+    for (; first != last; ++first) {
+      try_init_pile(reads[first->lhs_id]);
+      try_init_pile(reads[first->rhs_id]);
+    }
+  };
+
+  // auto const overlap_strings = 
+  //   [&reads](biosoup::Overlap const& ovlp) -> 
+  //     std::pair<std::string, std::string> {
+
+  // 
   // };
 
-  // auto const calc_coverage_for =
-  //     [&overlap_strings, &align_strings](
-  //         std::unique_ptr<biosoup::NucleicAcid> const& seq,
-  //         std::vector<biosoup::Overlap>& ovlps) -> Pile {
-  //   auto dst =
-  //       Pile{.id = seq->id,
-  //            .seq_name = seq->name,
-  //            .covgs = std::vector<Coverage>(
-  //                seq->inflated_len,
-  //                Coverage{.a = 0, .c = 0, .g = 0, .t = 0, .del = 0, .ins =
-  //                0})};
+  for (auto& ovlp_group : ovlp_groups) {
+    refresh_active_piles(ovlp_group.cbegin(), ovlp_group.cend());
 
-  //   for (auto const& ovlp : ovlps) {
-  //     auto [query_substr, target_substr] = overlap_strings(ovlp);
-  //     auto const edlib_res_align = align_strings(query_substr,
-  //     target_substr);
-
-  //     query_substr.clear();
-  //     query_substr.shrink_to_fit();
-
-  //     auto query_id = ovlp.lhs_id;
-  //     auto target_id = ovlp.rhs_id;
-
-  //     auto query_pos = ovlp.lhs_begin;
-  //     auto target_pos = 0U;
-
-  //     for (auto i = 0U; i < edlib_res_align.alignmentLength; ++i) {
-  //       switch (edlib_res_align.alignment[i]) {
-  //         case 0:
-  //         case 3: {  // match
-  //           /* clang-format off */
-  //           switch (target_substr[target_pos]) {
-  //             case 'A': ++dst.covgs[query_pos].a; break;
-  //             case 'C': ++dst.covgs[query_pos].c; break;
-  //             case 'G': ++dst.covgs[query_pos].g; break;
-  //             case 'T': ++dst.covgs[query_pos].t; break;
-  //             default: break;
-  //           }
-  //           /* clang-format on */
-
-  //           ++query_pos;
-  //           ++target_pos;
-
-  //           break;
-  //         }
-
-  //         case 1: {  // insertion on target
-  //           ++dst.covgs[query_pos].del;
-  //           ++query_pos;
-  //           break;
-  //         }
-
-  //         case 2: {  // insertion on query
-  //           ++dst.covgs[query_pos].ins;
-  //           ++target_id;
-  //           break;
-  //         }
-
-  //         default: {
-  //           break;
-  //         }
-  //       }
-  //     }
-
-  //     edlibFreeAlignResult(edlib_res_align);
-  //   };
-
-  //   ovlps.clear();
-  //   ovlps.shrink_to_fit();
-
-  //   return dst;
-  // };
-
-  // auto const async_calc_coverage_for =
-  //     [&thread_pool, &calc_coverage_for](
-  //         std::reference_wrapper<std::unique_ptr<biosoup::NucleicAcid> const>
-  //             seq,
-  //         std::reference_wrapper<std::vector<biosoup::Overlap>> ovlps)
-  //     -> std::future<Pile> {
-  //   return thread_pool->Submit(calc_coverage_for, seq, ovlps);
-  // };
-
-  // {
-  //   auto batch_piles = std::vector<Pile>();
-  //   auto timer = biosoup::Timer();
-
-  //   auto pile_futures = std::vector<std::future<Pile>>();
-  //   auto serialize_futures = std::deque<std::future<
-  //       std::tuple<std::filesystem::path, std::size_t, std::size_t,
-  //       double>>>();
-
-  //   auto is_ser_future_ready =
-  //       [](decltype(serialize_futures)::const_reference f) -> bool {
-  //     return f.wait_for(std::chrono::seconds(0)) ==
-  //     std::future_status::ready;
-  //   };
-
-  //   auto pop_and_report = [&serialize_futures]() -> void {
-  //     auto const [dst_file, raw_sz, com_sz, comp_time] =
-  //         serialize_futures.front().get();
-  //     serialize_futures.pop_front();
-
-  //     fmt::print(stderr,
-  //                "[camel::CalculateCoverage]({:12.3f}) {} -> "
-  //                "comp ratio: {:1.3f}\n",
-  //                comp_time, dst_file.string(), 1. * raw_sz / com_sz);
-  //   };
-
-  //   for (auto covg_batch_begin = 0UL, batch_id = 0UL;
-  //        covg_batch_begin < seqs.size(); ++batch_id) {
-  //     timer.Start();
-  //     auto const covg_batch_end =
-  //         find_batch_end(covg_batch_begin, seqs.size(),
-  //         detail::kAlignBatchCap);
-
-  //     auto const batch_n_seqs = covg_batch_end - covg_batch_begin;
-  //     pile_futures.reserve(batch_n_seqs);
-  //     batch_piles.reserve(batch_n_seqs);
-
-  //     while (!serialize_futures.empty() &&
-  //            is_ser_future_ready(serialize_futures.front())) {
-  //       pop_and_report();
-  //     }
-
-  //     std::transform(std::next(seqs.begin(), covg_batch_begin),
-  //                    std::next(seqs.begin(), covg_batch_end),
-  //                    std::next(ovlps.begin(), covg_batch_begin),
-  //                    std::back_inserter(pile_futures),
-  //                    async_calc_coverage_for);
-
-  //     fmt::print(stderr,
-  //                "[camel::CalculateCoverage] calculating coverage "
-  //                "for {} reads\n",
-  //                covg_batch_end - covg_batch_begin);
-
-  //     std::transform(pile_futures.begin(), pile_futures.end(),
-  //                    std::back_inserter(batch_piles),
-  //                    std::mem_fn(&std::future<Pile>::get));
-
-  //     fmt::print(
-  //         stderr,
-  //         "[camel::CalculateCoverage]({:12.3f}) finished coverage batch\n",
-  //         timer.Stop(), covg_batch_end - covg_batch_begin);
-
-  //     timer.Start();
-
-  //     serialize_futures.emplace_back(thread_pool->Submit(
-  //         [&pile_storage_dir](std::vector<Pile> batch_piles,
-  //                             std::size_t batch_id)
-  //             -> std::tuple<std::filesystem::path, std::size_t, std::size_t,
-  //                           double> {
-  //           auto ser_timer = biosoup::Timer();
-
-  //           ser_timer.Start();
-  //           auto const dst_file = SerializePileBatch(
-  //               batch_piles.cbegin(), batch_piles.cend(), pile_storage_dir,
-  //               fmt::format("pile_batch_{:04d}", batch_id));
-
-  //           auto const uncompressed_bytes = std::transform_reduce(
-  //               std::make_move_iterator(batch_piles.begin()),
-  //               std::make_move_iterator(batch_piles.end()), 0UL,
-  //               std::plus<std::size_t>(), [](Pile&& pile) -> std::size_t {
-  //                 return sizeof(Pile::id) + pile.seq_name.size() +
-  //                        pile.covgs.size() * sizeof(Coverage);
-  //               });
-
-  //           auto const compressed_bytes =
-  //           std::filesystem::file_size(dst_file);
-
-  //           return std::make_tuple(std::move(dst_file), uncompressed_bytes,
-  //                                  compressed_bytes, ser_timer.Stop());
-  //         },
-  //         std::move(batch_piles), batch_id));
-
-  //     covg_batch_begin = covg_batch_end;
-  //     pile_futures.clear();
-  //     batch_piles.clear();
-  //   }
-
-  //   while (!serialize_futures.empty()) {
-  //     pop_and_report();
-  //   }
-  // }
+    ovlp_group.clear();
+    ovlp_group.shrink_to_fit();
+  }
 }
 
 }  // namespace camel

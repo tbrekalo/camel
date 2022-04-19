@@ -64,7 +64,6 @@ using IsOverlapSink = std::is_invocable_r<void, T, biosoup::Overlap const&>;
 template <class T>
 inline bool constexpr IsOverlapSinkV = IsOverlapSink<T>::value;
 
-
 /**
  * @brief Determine overlap type provided origin sequence length information
  */
