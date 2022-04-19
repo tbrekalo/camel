@@ -16,7 +16,7 @@
 namespace camel {
 
 CAMEL_EXPORT struct Coverage {
-  using ValueType = std::uint32_t;
+  using ValueType = std::uint16_t;
 
   ValueType a;
   ValueType c;
@@ -27,6 +27,8 @@ CAMEL_EXPORT struct Coverage {
   ValueType ins;
 };
 
+static_assert(sizeof(Coverage) == (6 * 2));
+
 CAMEL_EXPORT struct Pile {
   std::uint32_t id;
   std::string seq_name;
@@ -35,7 +37,7 @@ CAMEL_EXPORT struct Pile {
 
 CAMEL_EXPORT auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     std::filesystem::path const& pile_storage_dir) -> void;
 
 }  // namespace camel
