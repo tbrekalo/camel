@@ -25,16 +25,30 @@ CAMEL_EXPORT struct MapCfg {
   double filter_p = 0.001;
 };
 
+/**
+ * @brief helper type for @ref Group and @ref FindOverlaps
+ */
 CAMEL_EXPORT struct ReadIdOvlpCnt {
   std::uint32_t read_id;
   std::size_t n_overlaps;
 };
 
+/**
+ * @brief Intended only to be used as a return type
+ *          from @ref FindOverlaps
+ */
 CAMEL_EXPORT struct Group {
-  std::vector<ReadIdOvlpCnt> read_n_ovlps;
+  /**
+   * @brief assumes that the read_ids are unique 
+   *          and sorted in ascending order
+   */
+  std::vector<ReadIdOvlpCnt> read_n_ovlps; 
   std::vector<std::vector<biosoup::Overlap>> ovlp_vecs;
 };
 
+/**
+ * @brief Find overlaps between reads 
+ */
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
