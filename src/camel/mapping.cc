@@ -16,7 +16,6 @@
 namespace camel {
 
 namespace detail {
-
 static constexpr auto kMinimizeBatchCap = 1UL << 32UL;
 static constexpr auto kMapBatchCap = 1UL << 30UL;
 static constexpr auto kOvlpBlockCap = 1UL << 16UL;
@@ -33,9 +32,10 @@ auto FindOverlaps(
   auto dst = std::vector<Group>();
 
   auto group_ids = std::vector<std::uint32_t>(reads.size());
-  auto group_sizes = std::vector<std::uint32_t>(reads.size());
+  auto group_sizes = std::vector<std::uint32_t>(reads.size(), 1U);
   std::iota(group_ids.begin(), group_ids.end(), 0U);
 
+  auto n_ovlps = 0U;
   auto read_ovlp_cnt = std::vector<std::size_t>(reads.size(), 0U);
   auto read_ovlp_vecs = std::vector<std::vector<std::vector<biosoup::Overlap>>>(
       reads.size(), std::vector<std::vector<biosoup::Overlap>>());
@@ -43,7 +43,7 @@ auto FindOverlaps(
     it.emplace_back();
   }
 
-  auto group_ovlp_cnt = std::vector<std::uint64_t>(reads.size());
+  // auto group_ovlp_cnt = std::vector<std::uint64_t>(reads.size());
 
   auto minimizer_engine =
       ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
@@ -67,33 +67,26 @@ auto FindOverlaps(
     return group_id;
   };
 
-  auto join_groups = [&group_ids, &group_sizes, &group_ovlp_cnt,
-                      &find_group_id](
+  auto join_groups = [&group_ids, &group_sizes, &find_group_id](
                          std::uint32_t const lhs_id,
                          std::uint32_t const rhs_id) -> std::uint32_t {
     auto const lhs_group_id = find_group_id(lhs_id);
     auto const rhs_group_id = find_group_id(rhs_id);
 
     if (lhs_group_id != rhs_group_id) {
-      auto const lhs_group_size = group_sizes[lhs_group_id];
-      auto const rhs_group_size = group_sizes[rhs_group_id];
+      auto& lhs_group_size = group_sizes[lhs_group_id];
+      auto& rhs_group_size = group_sizes[rhs_group_id];
 
       if (lhs_group_size >= rhs_group_size) {
-        group_ids[rhs_group_id] = lhs_group_id;
-        group_sizes[lhs_group_id] += rhs_group_size;
+        lhs_group_size += rhs_group_size;
+        rhs_group_size = 0U;
 
-        auto& that_cnt = group_ovlp_cnt[rhs_group_id];
-        group_ovlp_cnt[lhs_group_id] += that_cnt;
-        that_cnt = 0;
-
-        return lhs_group_id;
+        group_ids[rhs_id] = lhs_group_id;
       } else {
-        group_ids[lhs_group_id] = rhs_group_id;
-        group_sizes[rhs_group_id] += lhs_group_size;
+        rhs_group_size += lhs_group_size;
+        lhs_group_size = 0U;
 
-        auto& that_cnt = group_ovlp_cnt[lhs_group_id];
-        group_ovlp_cnt[rhs_group_id] += that_cnt;
-        that_cnt = 0;
+        group_ids[lhs_id] = rhs_group_id;
 
         return rhs_group_id;
       }
@@ -173,8 +166,8 @@ auto FindOverlaps(
       for (auto& it : map_futures) {
         for (auto const& ovlp : it.get()) {
           auto const g_id = join_groups(ovlp.lhs_id, ovlp.rhs_id);
-          ++group_ovlp_cnt[g_id];
           store_overlap(ovlp);
+          ++n_ovlps;
         }
       }
 
@@ -193,19 +186,15 @@ auto FindOverlaps(
   // group overlaps in groups
   {
     timer.Start();
-
-    auto const [n_groups, n_ovlps] = std::transform_reduce(
-        group_ovlp_cnt.cbegin(), group_ovlp_cnt.cend(), std::pair(0U, 0UL),
-        [](auto const& lhs, auto const& rhs) {
-          return std::pair(lhs.first + rhs.first, lhs.second + rhs.second);
-        },
-        [](std::uint64_t const cnt) { return std::pair(cnt > 0, cnt); });
+    auto const n_groups =
+        std::count_if(group_sizes.cbegin(), group_sizes.cend(),
+                      [](std::uint32_t const sz) -> bool { return sz > 1U; });
 
     auto group_id_to_handle = tsl::robin_map<std::uint32_t, std::uint32_t>();
     group_id_to_handle.reserve(n_groups);
 
     for (auto g_id = 0U, g_handle = 0U; g_id < reads.size(); ++g_id) {
-      if (group_sizes[g_id] > 0) {
+      if (group_sizes[g_id] > 1U) {
         group_id_to_handle.emplace(g_id, g_handle++);
       }
     }
@@ -217,13 +206,12 @@ auto FindOverlaps(
     timer.Start();
     dst.resize(n_groups);
     for (auto read_id = 0U; read_id < reads.size(); ++read_id) {
-      auto h_id = group_id_to_handle[find_group_id(read_id)];
+      auto g_handle = group_id_to_handle[find_group_id(read_id)];
       auto read_ovlp_vec = std::move(read_ovlp_vecs[read_id]);
 
       read_ovlp_vec.back().shrink_to_fit();
-
       std::move(read_ovlp_vec.begin(), read_ovlp_vec.end(),
-                std::back_inserter(dst[h_id].ovlp_vecs));
+                std::back_inserter(dst[g_handle].ovlp_vecs));
 
       if (read_id % 20000U == 0U) {
         fmt::print(stderr, "distrubuted {:12d} / {:12d} read overlap vecs\r",
@@ -238,6 +226,8 @@ auto FindOverlaps(
       group_seq_sizes[g_handle] += reads[read_id]->inflated_len;
     }
 
+    // TODO: plot group information
+
     for (auto const& it : group_id_to_handle) {
       dst[it.second].read_n_ovlps.reserve(group_sizes[it.first]);
       dst[it.second].ovlp_vecs.shrink_to_fit();
@@ -249,12 +239,27 @@ auto FindOverlaps(
           .read_id = read_id, .n_overlaps = read_ovlp_cnt[read_id]});
     }
 
+    // for (auto g_id = 0U; g_id < reads.size(); ++g_id) {
+    //   if (group_sizes[g_id] > 1) {
+    //     fmt::print(stderr, "[de::group_sz] {} : {}\n", group_id_to_handle[g_id],
+    //                group_sizes[g_id]);
+    //   }
+    // }
+
+    auto const invalid_iter = std::remove_if(
+        dst.begin(), dst.end(),
+        [](Group const& g) -> bool { return g.read_n_ovlps.size() == 1UL; });
+
+    auto const n_invalid = std::distance(invalid_iter, dst.end());
+
+    dst.erase(invalid_iter, dst.end());
+
     fmt::print(
         stderr,
         "[camel::FindOverlaps]({:12.3f}) transformed {} overlaps in {} "
         "groups\n"
         "[camel::FindOverlaps] largest group is {} bytes\n",
-        timer.Stop(), n_ovlps, n_groups,
+        timer.Stop(), n_ovlps, n_groups - n_invalid,
         *std::max_element(group_seq_sizes.cbegin(), group_seq_sizes.cend()));
   }
 
