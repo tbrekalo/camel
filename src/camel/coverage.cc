@@ -98,17 +98,6 @@ auto CalculateCoverage(
 
   auto active_piles = tsl::robin_map<std::uint32_t, Pile>();
 
-  auto const try_init_pile =
-      [&active_piles](
-          std::unique_ptr<biosoup::NucleicAcid> const& read) -> void {
-    auto& read_pile = active_piles[read->id];
-    if (read_pile.seq_name.empty()) {
-      read_pile.id = read->id;
-      read_pile.seq_name = read->name;
-      read_pile.covgs.resize(read->inflated_len);
-    }
-  };
-
   auto parallel_gather =
       [&thread_pool](
           ReadIdOvlpCnt const& read_info,
@@ -116,10 +105,10 @@ auto CalculateCoverage(
     auto dst = std::vector<biosoup::Overlap>();
     dst.resize(read_info.n_overlaps);
 
-    auto gather_futures =
-        std::vector<std::future<std::vector<biosoup::Overlap>>>();
+    auto gather_futures = std::vector<std::future<void>>();
 
     auto empty_idx = std::atomic<std::size_t>();
+
     for (auto const& ovlp_vec : active_group.ovlp_vecs) {
       gather_futures.emplace_back(thread_pool->Submit(
           [&dst, &empty_idx](
@@ -139,14 +128,119 @@ auto CalculateCoverage(
     return dst;
   };
 
+  auto const overlap_strings =
+      [&reads](
+          biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
+    auto query_str = reads[ovlp.lhs_id]->InflateData(
+        ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
+
+    auto target_str = reads[ovlp.rhs_id]->InflateData(
+        ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
+
+    if (!ovlp.strand) {
+      auto rc = biosoup::NucleicAcid("", target_str);
+      rc.ReverseAndComplement();
+
+      target_str = rc.InflateData();
+    }
+
+    return std::make_pair(std::move(query_str), std::move(target_str));
+  };
+
+  auto const align_strings =
+      [](std::string const& query_str,
+         std::string const& target_str) -> EdlibAlignResult {
+    return edlibAlign(
+        query_str.c_str(), query_str.size(), target_str.c_str(),
+        target_str.size(),
+        edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
+  };
+
+  auto const calc_coverage_for =
+      [&overlap_strings, &align_strings](
+          std::unique_ptr<biosoup::NucleicAcid> const& seq,
+          std::vector<biosoup::Overlap>& ovlps) -> Pile {
+    auto dst =
+        Pile{.id = seq->id,
+             .seq_name = seq->name,
+             .covgs = std::vector<Coverage>(
+                 seq->inflated_len,
+                 Coverage{.a = 0, .c = 0, .g = 0, .t = 0, .del = 0, .ins = 0})};
+
+    for (auto const& ovlp : ovlps) {
+      auto [query_substr, target_substr] = overlap_strings(ovlp);
+      auto const edlib_res_align = align_strings(query_substr, target_substr);
+
+      query_substr.clear();
+      query_substr.shrink_to_fit();
+
+      auto query_id = ovlp.lhs_id;
+      auto target_id = ovlp.rhs_id;
+
+      auto query_pos = ovlp.lhs_begin;
+      auto target_pos = 0U;
+
+      for (auto i = 0U; i < edlib_res_align.alignmentLength; ++i) {
+        switch (edlib_res_align.alignment[i]) {
+          case 0:
+          case 3: {  // match
+            /* clang-format off */
+            switch (target_substr[target_pos]) {
+              case 'A': ++dst.covgs[query_pos].a; break;
+              case 'C': ++dst.covgs[query_pos].c; break;
+              case 'G': ++dst.covgs[query_pos].g; break;
+              case 'T': ++dst.covgs[query_pos].t; break;
+              default: break;
+            }
+            /* clang-format on */
+
+            ++query_pos;
+            ++target_pos;
+
+            break;
+          }
+
+          case 1: {  // insertion on target
+            ++dst.covgs[query_pos].del;
+            ++query_pos;
+            break;
+          }
+
+          case 2: {  // insertion on query
+            ++dst.covgs[query_pos].ins;
+            ++target_id;
+            break;
+          }
+
+          default: {
+            break;
+          }
+        }
+      }
+
+      edlibFreeAlignResult(edlib_res_align);
+    };
+
+    ovlps.clear();
+    ovlps.shrink_to_fit();
+
+    return dst;
+  };
+
 
   for (auto g_id = 0U; g_id < ovlp_groups.size(); ++g_id) {
     auto active_group = std::move(ovlp_groups[g_id]);
+
     for (auto batch_first = active_group.read_n_ovlps.cbegin();
          batch_first != active_group.read_n_ovlps.end();) {
       auto batch_end =
           find_batch_last(batch_first, active_group.read_n_ovlps.cend(),
                           detail::kAlignBatchCap);
+
+      auto overlaps = parallel_gather(*batch_first, active_group);
+      auto piles = calc_coverage_for(reads[batch_first->read_id], overlaps);
+
+      active_piles.insert({batch_first->read_id, std::move(piles)});
     }
   }
 }
