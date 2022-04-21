@@ -82,8 +82,8 @@ NB_MODULE(camelpy_ext, m) {
       .def_readwrite("c", &camel::Coverage::c)
       .def_readwrite("g", &camel::Coverage::g)
       .def_readwrite("t", &camel::Coverage::t)
-      .def_readwrite("del", &camel::Coverage::del)
-      .def_readwrite("ins", &camel::Coverage::ins);
+      .def_readwrite("deletion", &camel::Coverage::del)
+      .def_readwrite("insertion", &camel::Coverage::ins);
 
   nb::class_<camel::Pile>(m, "Pile")
       .def(nb::init<>())

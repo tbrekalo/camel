@@ -74,17 +74,16 @@ conan_cmake_configure(
   GENERATORS 
     cmake_find_package_multi)
 
-foreach(TYPE ${CMAKE_CONFIGURATION_TYPES})
-    conan_cmake_autodetect(settings BUILD_TYPE ${TYPE})
-    conan_cmake_install(PATH_OR_REFERENCE .
-                        BUILD missing
-                        REMOTE conancenter
-                        SETTINGS ${settings})
-endforeach()
+conan_cmake_autodetect(settings)
 
-find_package(fmt CONFIG)
-find_package(tsl-robin-map CONFIG)
-find_package(zstd CONFIG)
+conan_cmake_install(PATH_OR_REFERENCE .
+                    BUILD missing
+                    REMOTE conancenter
+                    SETTINGS ${settings})
+
+find_package(fmt)
+find_package(tsl-robin-map)
+find_package(zstd)
 
 FetchContent_Declare(
   bioparser
@@ -154,8 +153,8 @@ target_include_directories(camel PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>")
 
 if (CAMEL_BUILD_EXE) 
-  find_package(cxxopts CONFIG)
-  find_package(mimalloc CONFIG)
+  find_package(cxxopts)
+  find_package(mimalloc)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe
