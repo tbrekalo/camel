@@ -28,43 +28,18 @@ MapCfg::MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p)
 auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<ReadOverlaps> {
-  auto read_ovlps = std::vector<ReadOverlaps>(reads.size());
+    -> std::vector<ReadOverlapIndex> {
+  auto read_ovlps = std::vector<ReadOverlapIndex>(reads.size());
 
   auto minimizer_engine =
       ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
 
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
 
-  auto const close_remote_interval =
-      [&read_ovlps](std::uint32_t const target_id) -> void {
-    auto const& target_vec = read_ovlps[target_id].target_overlaps;
-
-    if (!target_vec.empty()) {
-      auto& query_remotes =
-          read_ovlps[target_vec.back().lhs_id].remote_intervals;
-      query_remotes.back().last_index = target_vec.size();
-    }
-  };
-
   auto const store_ovlp = [&read_ovlps](biosoup::Overlap const& ovlp) -> void {
     auto& target_vec = read_ovlps[ovlp.rhs_id].target_overlaps;
     if (target_vec.size() == target_vec.capacity()) {
       target_vec.reserve(target_vec.size() * 1.5);
-    }
-
-    if (target_vec.empty() || target_vec.back().lhs_id != ovlp.lhs_id) {
-      if (!target_vec.empty()) {
-        auto& query_remotes =
-            read_ovlps[target_vec.back().lhs_id].remote_intervals;
-        query_remotes.back().last_index = target_vec.size();
-      }
-
-      auto& query_remotes = read_ovlps[ovlp.lhs_id].remote_intervals;
-      query_remotes.push_back(OverlapInterval{
-          .target_id = ovlp.rhs_id,
-          .first_index = target_vec.size(),
-      });
     }
 
     target_vec.push_back(ovlp);
@@ -84,13 +59,20 @@ auto FindOverlaps(
         return first;
       };
 
-  auto map_sequence =
+  auto const map_sequence =
       [&minimizer_engine](std::unique_ptr<biosoup::NucleicAcid> const& read)
       -> std::vector<biosoup::Overlap> {
-    return minimizer_engine.Map(read, true, true, true);
+    auto dst = minimizer_engine.Map(read, true, true, true);
+    std::sort(  // TODO: does ram provide sort order?
+        dst.begin(), dst.end(),
+        [](biosoup::Overlap const& a, biosoup::Overlap const& b) -> bool {
+          return a.rhs_id < b.rhs_id;
+        });
+
+    return dst;
   };
 
-  auto map_sequence_async =
+  auto const map_sequence_async =
       [&thread_pool, &map_sequence](
           std::reference_wrapper<std::unique_ptr<biosoup::NucleicAcid> const>
               read) -> std::future<std::vector<biosoup::Overlap>> {
@@ -104,11 +86,11 @@ auto FindOverlaps(
   };
 
   auto timer = biosoup::Timer();
-  for (auto minimize_first = reads.cbegin(); minimize_first != reads.end();) {
+  for (auto minimize_first = reads.cbegin(); minimize_first != reads.cend();) {
     timer.Start();
 
     while (!defrag_futures.empty() && is_defrag_ready(defrag_futures.front())) {
-      defrag_futures.front().get();
+      defrag_futures.front().wait();
       defrag_futures.pop_front();
     }
 
@@ -132,9 +114,30 @@ auto FindOverlaps(
       std::transform(map_first, map_last, std::back_inserter(map_futures),
                      map_sequence_async);
 
-      for (auto& ovlp_vec : map_futures) {
-        for (auto const& ovlp : ovlp_vec.get()) {
-          store_ovlp(ovlp);
+      for (auto& it : map_futures) {
+        auto ovlp_vec = it.get();
+        if (!ovlp_vec.empty()) {
+          auto const query_id = ovlp_vec.front().lhs_id;
+          auto& query_remotes = read_ovlps[query_id].remote_intervals;
+
+          for (auto target_first = ovlp_vec.cbegin();
+               target_first != ovlp_vec.cend();) {
+            auto const target_id = target_first->rhs_id;
+            auto const target_last = std::find_if_not(
+                target_first, ovlp_vec.cend(),
+                [target_id](biosoup::Overlap const& ovlp) -> bool {
+                  return ovlp.rhs_id == target_id;
+                });
+
+            auto const& target_vec = read_ovlps[target_id].target_overlaps;
+
+            query_remotes.push_back(OverlapInterval{
+                .target_id = target_id, .first_index = target_vec.size()});
+            std::for_each(target_first, target_last, store_ovlp);
+            query_remotes.back().last_index = target_vec.size();
+
+            target_first = target_last;
+          }
         }
       }
 
@@ -148,17 +151,13 @@ auto FindOverlaps(
     }
 
     defrag_futures.emplace_back(thread_pool->Submit(
-        [&read_ovlps, &close_remote_interval](
+        [&read_ovlps](
             std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
                 first,
             std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
                 last) -> void {
           for (auto it = first; it != last; ++it) {
-            close_remote_interval((*it)->id);
             read_ovlps[(*it)->id].target_overlaps.shrink_to_fit();
-          }
-
-          for (auto it = first; it != last; ++it) {
             read_ovlps[(*it)->id].remote_intervals.shrink_to_fit();
           }
         },

@@ -30,7 +30,7 @@ CAMEL_EXPORT struct OverlapInterval {
   std::size_t last_index;
 };
 
-CAMEL_EXPORT struct ReadOverlaps {
+CAMEL_EXPORT struct ReadOverlapIndex {
   std::vector<biosoup::Overlap> target_overlaps;
   std::vector<OverlapInterval> remote_intervals;
 };
@@ -41,7 +41,7 @@ CAMEL_EXPORT struct ReadOverlaps {
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<ReadOverlaps>;
+    -> std::vector<ReadOverlapIndex>;
 
 }  // namespace camel
 
