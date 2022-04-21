@@ -1,5 +1,6 @@
 [build-system]
 requires = [
+  "conan>=1.47",
   "setuptools>=42",
   "wheel",
   "scikit-build",

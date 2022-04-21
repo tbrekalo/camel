@@ -14,10 +14,12 @@ from typing import List, Dict, Callable
 
 def plot_rng_region(pile: cp.Pile, dst_folder: Path, win_len: int = 250):
   fetch_fns: Dict[str, Callable[[cp.Coverage], np.uint16]] = {
-      'match': lambda c: c.match,
-      'deletion': lambda c: c.deletion,
-      'insertion': lambda c: c.insertion,
-      'mismatch': lambda c: c.mismatch
+      'A': lambda c: c.a,
+      'C': lambda c: c.c,
+      'G': lambda c: c.g,
+      'T': lambda c: c.t,
+      'del': lambda c: c.deletion,
+      'ins': lambda c: c.insertion,
   }
 
   slice_first = np.random.randint(0, len(pile.coverages) - win_len)
