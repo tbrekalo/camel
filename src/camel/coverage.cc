@@ -186,7 +186,8 @@ auto CalculateCoverage(
   {
     auto batch_id = 0U;
     auto active_piles = std::vector<Pile>();
-    for (auto align_first = reads.cbegin(); align_first != reads.cend();) {
+    for (auto align_first = reads.cbegin(); align_first != reads.cend();
+         ++batch_id) {
       timer.Start();
       auto const align_last =
           find_batch_last(align_first, reads.cend(), detail::kAlignBatchCap);
