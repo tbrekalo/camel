@@ -155,9 +155,9 @@ auto FindOverlaps(
             read_ovlps[(*it)->id].shrink_to_fit();
           }
         },
-        minimize_last, minimize_last));
+        minimize_first, minimize_last));
 
-    if (minimize_first != reads.begin()) {
+    if (minimize_first != reads.cbegin()) {
       minimize_last = std::prev(minimize_first);
     } else {
       break;
