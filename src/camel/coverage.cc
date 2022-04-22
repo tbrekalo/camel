@@ -25,7 +25,7 @@ auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     std::filesystem::path const& pile_storage_dir) -> void {
-  auto read_overlap_indices = FindOverlaps(thread_pool, map_cfg, reads);
+  auto read_overlap_vecs = FindOverlaps(thread_pool, map_cfg, reads);
 
   if (std::filesystem::exists(pile_storage_dir)) {
     std::filesystem::remove_all(pile_storage_dir);
@@ -136,22 +136,32 @@ auto CalculateCoverage(
   auto coverage_futures = std::vector<std::future<Pile>>();
 
   auto const calc_coverage =
-      [&read_overlap_indices, &update_coverage](
+      [&read_overlap_vecs, &update_coverage](
           std::unique_ptr<biosoup::NucleicAcid> const& read) -> Pile {
     auto dst = Pile{.id = read->id,
                     .seq_name = read->name,
                     .covgs = std::vector<Coverage>(read->inflated_len)};
 
-    auto const& read_ovlps = read_overlap_indices[read->id];
-    for (auto const& target_ovlp : read_ovlps.target_overlaps) {
+    auto const& read_ovlps = read_overlap_vecs[read->id];
+    for (auto const& target_ovlp : read_ovlps) {
       auto const query_ovlp = detail::ReverseOverlap(target_ovlp);
       update_coverage(dst, query_ovlp);
     }
 
-    for (auto const& [id, first, last] : read_ovlps.remote_intervals) {
-      auto const& query_ovlps = read_overlap_indices[id].target_overlaps;
-      for (auto idx = first; idx != last; ++idx) {
-        update_coverage(dst, query_ovlps[idx]);
+    for (auto remote_id = 0U; remote_id < read_overlap_vecs.size();
+         ++remote_id) {
+      if (remote_id != read->id) {
+        auto const& remote_ovlps = read_overlap_vecs[remote_id];
+        auto iter = std::lower_bound(
+            remote_ovlps.cbegin(), remote_ovlps.cend(), read->id,
+            [](biosoup::Overlap const& ovlp, std::uint32_t const query_id) {
+              return ovlp.lhs_id < query_id;
+            });
+
+        for (; iter != remote_ovlps.cend() && iter->lhs_id == read->id;
+             ++iter) {
+          update_coverage(dst, *iter);
+        }
       }
     }
 
@@ -183,6 +193,7 @@ auto CalculateCoverage(
                            "comp ratio: {:1.3f}\n"),
                comp_time, dst_file.string(), 1. * raw_sz / com_sz);
   };
+
   {
     auto batch_id = 0U;
     auto active_piles = std::vector<Pile>();
