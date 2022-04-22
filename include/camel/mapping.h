@@ -24,24 +24,13 @@ CAMEL_EXPORT struct MapCfg {
   double filter_p = 0.001;
 };
 
-CAMEL_EXPORT struct OverlapInterval {
-  std::uint32_t target_id;
-  std::size_t first_index;
-  std::size_t last_index;
-};
-
-CAMEL_EXPORT struct ReadOverlapIndex {
-  std::vector<biosoup::Overlap> target_overlaps;
-  std::vector<OverlapInterval> remote_intervals;
-};
-
 /**
  * @brief Find overlaps between reads
  */
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<ReadOverlapIndex>;
+    -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel
 

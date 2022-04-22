@@ -28,8 +28,8 @@ MapCfg::MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p)
 auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<ReadOverlapIndex> {
-  auto read_ovlps = std::vector<ReadOverlapIndex>(reads.size());
+    -> std::vector<std::vector<biosoup::Overlap>> {
+  auto read_ovlps = std::vector<std::vector<biosoup::Overlap>>(reads.size());
 
   auto minimizer_engine =
       ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
@@ -37,7 +37,7 @@ auto FindOverlaps(
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
 
   auto const store_ovlp = [&read_ovlps](biosoup::Overlap const& ovlp) -> void {
-    auto& target_vec = read_ovlps[ovlp.rhs_id].target_overlaps;
+    auto& target_vec = read_ovlps[ovlp.rhs_id];
     if (target_vec.size() == target_vec.capacity()) {
       target_vec.reserve(target_vec.size() * 1.5);
     }
@@ -45,31 +45,47 @@ auto FindOverlaps(
     target_vec.push_back(ovlp);
   };
 
-  auto const find_batch_last =
+  auto const find_batch_batckwards =
       [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
              first,
          std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
              last,
-         std::size_t const batch_cap) {
-        for (auto batch_sz = 0UL; batch_sz < batch_cap && first != last;
-             ++first) {
-          batch_sz += first->get()->inflated_len;
+         std::size_t const batch_cap)
+      -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
+    if (last != first) {
+      auto curr_read = std::prev(last);
+      for (auto batch_sz = 0UL; batch_sz < batch_cap;
+           std::advance(curr_read, -1)) {
+        batch_sz += (*curr_read)->inflated_len;
+        if (curr_read == first) {
+          break;
         }
+      }
 
-        return first;
-      };
+      return curr_read;
+    } else {
+      return first;
+    }
+  };
+
+  auto const find_batch_forward =
+      [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+             first,
+         std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+             last,
+         std::size_t const batch_cap)
+      -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
+    for (auto batch_sz = 0UL; batch_sz < batch_cap && first < last; ++first) {
+      batch_sz += (*first)->inflated_len;
+    }
+
+    return first;
+  };
 
   auto const map_sequence =
       [&minimizer_engine](std::unique_ptr<biosoup::NucleicAcid> const& read)
       -> std::vector<biosoup::Overlap> {
-    auto dst = minimizer_engine.Map(read, true, true, true);
-    std::sort(  // TODO: does ram provide sort order?
-        dst.begin(), dst.end(),
-        [](biosoup::Overlap const& a, biosoup::Overlap const& b) -> bool {
-          return a.rhs_id < b.rhs_id;
-        });
-
-    return dst;
+    return minimizer_engine.Map(read, true, true, true);
   };
 
   auto const map_sequence_async =
@@ -86,7 +102,8 @@ auto FindOverlaps(
   };
 
   auto timer = biosoup::Timer();
-  for (auto minimize_first = reads.cbegin(); minimize_first != reads.cend();) {
+  auto minimize_last = reads.cend();
+  while (true) {
     timer.Start();
 
     while (!defrag_futures.empty() && is_defrag_ready(defrag_futures.front())) {
@@ -94,57 +111,35 @@ auto FindOverlaps(
       defrag_futures.pop_front();
     }
 
-    auto const minimize_last = find_batch_last(minimize_first, reads.cend(),
-                                               detail::kMinimizeBatchCap);
+    auto const minimize_first = find_batch_batckwards(
+        reads.cbegin(), minimize_last, detail::kMinimizeBatchCap);
 
     minimizer_engine.Minimize(minimize_first, minimize_last, true);
     minimizer_engine.Filter(map_cfg.filter_p);
 
-    fmt::print(stderr,
-               "[camel::FindOverlaps]({:12.3f}) minimized {} / {} reads\n",
-               timer.Stop(), std::distance(reads.cbegin(), minimize_last),
-               reads.size());
+    fmt::print(
+        stderr, "[camel::FindOverlaps]({:12.3f}) minimized {} / {} reads\n",
+        timer.Stop(), std::distance(minimize_first, reads.end()), reads.size());
 
-    for (auto map_first = minimize_first; map_first < reads.cend();) {
+    for (auto map_first = reads.cbegin(); map_first < minimize_last;) {
       timer.Start();
       auto const map_last =
-          find_batch_last(map_first, reads.cend(), detail::kMapBatchCap);
+          find_batch_forward(map_first, reads.cend(), detail::kMapBatchCap);
 
       map_futures.reserve(std::distance(map_first, map_last));
       std::transform(map_first, map_last, std::back_inserter(map_futures),
                      map_sequence_async);
 
       for (auto& it : map_futures) {
-        auto ovlp_vec = it.get();
-        if (!ovlp_vec.empty()) {
-          auto const query_id = ovlp_vec.front().lhs_id;
-          auto& query_remotes = read_ovlps[query_id].remote_intervals;
-
-          for (auto target_first = ovlp_vec.cbegin();
-               target_first != ovlp_vec.cend();) {
-            auto const target_id = target_first->rhs_id;
-            auto const target_last = std::find_if_not(
-                target_first, ovlp_vec.cend(),
-                [target_id](biosoup::Overlap const& ovlp) -> bool {
-                  return ovlp.rhs_id == target_id;
-                });
-
-            auto const& target_vec = read_ovlps[target_id].target_overlaps;
-
-            query_remotes.push_back(OverlapInterval{
-                .target_id = target_id, .first_index = target_vec.size()});
-            std::for_each(target_first, target_last, store_ovlp);
-            query_remotes.back().last_index = target_vec.size();
-
-            target_first = target_last;
-          }
+        for (auto&& ovlp : it.get()) {
+          store_ovlp(ovlp);
         }
       }
 
       fmt::print(stderr,
                  "[camel::FindOverlaps]({:12.3f}) mapped {} / {} reads\n",
                  timer.Stop(), std::distance(reads.cbegin(), map_last),
-                 std::distance(reads.cbegin(), minimize_last));
+                 std::distance(reads.begin(), minimize_last));
 
       map_first = map_last;
       map_futures.clear();
@@ -157,13 +152,16 @@ auto FindOverlaps(
             std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
                 last) -> void {
           for (auto it = first; it != last; ++it) {
-            read_ovlps[(*it)->id].target_overlaps.shrink_to_fit();
-            read_ovlps[(*it)->id].remote_intervals.shrink_to_fit();
+            read_ovlps[(*it)->id].shrink_to_fit();
           }
         },
-        minimize_first, minimize_last));
+        minimize_last, minimize_last));
 
-    minimize_first = minimize_last;
+    if (minimize_first != reads.begin()) {
+      minimize_last = std::prev(minimize_first);
+    } else {
+      break;
+    }
   }
 
   timer.Start();
@@ -173,7 +171,15 @@ auto FindOverlaps(
   }
   timer.Stop();
 
-  fmt::print(stderr, "[camel::FindOverlaps]({:12.3f})\n", timer.elapsed_time());
+  {
+    auto const n_ovlps = std::transform_reduce(
+        read_ovlps.cbegin(), read_ovlps.cend(), 0UL, std::plus<std::size_t>(),
+        std::mem_fn(&std::vector<biosoup::Overlap>::size));
+
+    fmt::print(stderr, "[camel::FindOverlaps]({:12.3f}) found {} overlaps\n",
+               timer.elapsed_time(), n_ovlps);
+  }
+
   return read_ovlps;
 }
 
