@@ -39,7 +39,7 @@ auto FindOverlaps(
   auto const store_ovlp = [&read_ovlps](biosoup::Overlap const& ovlp) -> void {
     auto& target_vec = read_ovlps[ovlp.rhs_id];
     if (target_vec.size() == target_vec.capacity()) {
-      target_vec.reserve(target_vec.size() * 1.5);
+      target_vec.reserve(target_vec.size() * 1.2);
     }
 
     target_vec.push_back(ovlp);
@@ -124,7 +124,7 @@ auto FindOverlaps(
     for (auto map_first = reads.cbegin(); map_first < minimize_last;) {
       timer.Start();
       auto const map_last =
-          find_batch_forward(map_first, reads.cend(), detail::kMapBatchCap);
+          find_batch_forward(map_first, minimize_last, detail::kMapBatchCap);
 
       map_futures.reserve(std::distance(map_first, map_last));
       std::transform(map_first, map_last, std::back_inserter(map_futures),
