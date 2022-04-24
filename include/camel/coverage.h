@@ -23,11 +23,12 @@ CAMEL_EXPORT struct Coverage {
   ValueType g;
   ValueType t;
 
+  // ValueType mat;
+  // ValueType mis;
   ValueType del;
   ValueType ins;
 };
 
-static_assert(sizeof(Coverage) == (6 * 2));
 
 CAMEL_EXPORT struct Pile {
   std::uint32_t id;

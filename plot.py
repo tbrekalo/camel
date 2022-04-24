@@ -18,6 +18,8 @@ def plot_rng_region(pile: cp.Pile, dst_folder: Path, win_len: int = 250):
       'C': lambda c: c.c,
       'G': lambda c: c.g,
       'T': lambda c: c.t,
+      # 'mat': lambda c: c.match,
+      # 'mis': lambda c: c.mismatch,
       'del': lambda c: c.deletion,
       'ins': lambda c: c.insertion,
   }
@@ -52,6 +54,6 @@ if dst_folder.exists():
   shutil.rmtree(dst_folder)
   dst_folder.mkdir(exist_ok=True)
 
-for pile in random.choices(piles, k=3):
+for pile in random.choices(piles, k=10):
   plot_rng_region(pile, dst_folder,
                   win_len=min(250, int(len(pile.coverages) / 2)))

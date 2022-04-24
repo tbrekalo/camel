@@ -95,7 +95,7 @@ auto CalculateCoverage(
     for (auto i = 0U; i < edlib_res_align.alignmentLength; ++i) {
       switch (edlib_res_align.alignment[i]) {
         case 0:
-        case 3: {  // match
+        case 3: {  // mismatch
           /* clang-format off */
             switch (target_substr[target_pos]) {
               case 'A': ++pile.covgs[query_pos].a; break;
@@ -120,7 +120,7 @@ auto CalculateCoverage(
 
         case 2: {  // insertion on query
           ++pile.covgs[query_pos].ins;
-          ++target_id;
+          ++target_pos;
           break;
         }
 
