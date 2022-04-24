@@ -82,6 +82,8 @@ NB_MODULE(camelpy_ext, m) {
       .def_readwrite("c", &camel::Coverage::c)
       .def_readwrite("g", &camel::Coverage::g)
       .def_readwrite("t", &camel::Coverage::t)
+      // .def_readwrite("match", &camel::Coverage::mat)
+      // .def_readwrite("mismatch", &camel::Coverage::mis)
       .def_readwrite("deletion", &camel::Coverage::del)
       .def_readwrite("insertion", &camel::Coverage::ins);
 
