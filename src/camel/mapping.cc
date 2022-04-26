@@ -6,11 +6,9 @@
 #include <iterator>
 #include <numeric>
 
-#include "biosoup/progress_bar.hpp"
 #include "biosoup/timer.hpp"
 #include "detail/overlap.h"
 #include "fmt/core.h"
-#include "fmt/ostream.h"
 #include "ram/minimizer_engine.hpp"
 
 namespace camel {
@@ -29,6 +27,14 @@ auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>> {
+  for (auto idx = 1U; idx < reads.size(); ++idx) {
+    if (reads[idx - 1U]->id + 1U != reads[idx]->id) {
+      throw std::runtime_error(
+          "[camel::FindOverlaps] read ids must form continuous ascending "
+          "sequence");
+    }
+  }
+
   auto read_ovlps = std::vector<std::vector<biosoup::Overlap>>(reads.size());
 
   auto minimizer_engine =
@@ -75,7 +81,7 @@ auto FindOverlaps(
              last,
          std::size_t const batch_cap)
       -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
-    for (auto batch_sz = 0UL; batch_sz < batch_cap && first < last; ++first) {
+    for (auto batch_sz = 0UL; batch_sz < batch_cap && first != last; ++first) {
       batch_sz += (*first)->inflated_len;
     }
 
@@ -152,7 +158,12 @@ auto FindOverlaps(
             std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
                 last) -> void {
           for (auto it = first; it != last; ++it) {
-            read_ovlps[(*it)->id].shrink_to_fit();
+            auto& ovlp_vec = read_ovlps[(*it)->id];
+            if (ovlp_vec.size() < ovlp_vec.capacity()) {
+              std::remove_reference_t<decltype(ovlp_vec)>(ovlp_vec.cbegin(),
+                                                          ovlp_vec.cend())
+                  .swap(ovlp_vec);
+            }
           }
         },
         minimize_first, minimize_last));
@@ -170,15 +181,6 @@ auto FindOverlaps(
     defrag_futures.pop_front();
   }
   timer.Stop();
-
-  {
-    auto const n_ovlps = std::transform_reduce(
-        read_ovlps.cbegin(), read_ovlps.cend(), 0UL, std::plus<std::size_t>(),
-        std::mem_fn(&std::vector<biosoup::Overlap>::size));
-
-    fmt::print(stderr, "[camel::FindOverlaps]({:12.3f}) found {} overlaps\n",
-               timer.elapsed_time(), n_ovlps);
-  }
 
   return read_ovlps;
 }

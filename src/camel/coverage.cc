@@ -11,6 +11,7 @@
 #include "edlib.h"
 #include "fmt/compile.h"
 #include "fmt/core.h"
+#include "fmt/ostream.h"
 
 namespace camel {
 
@@ -21,26 +22,31 @@ static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL;  // ~4.3gb
 
 }  // namespace detail
 
-auto CalculateCoverage(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+CAMEL_EXPORT auto CalculateCoverage(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void {
-  auto read_overlap_vecs = FindOverlaps(thread_pool, map_cfg, reads);
+  // consider making reads_overlaps just &; not const&
+  if (!std::is_sorted(
+          reads_overlaps.cbegin(), reads_overlaps.cend(),
+          [](ReadOverlapsPair const& lhs, ReadOverlapsPair const& rhs) -> bool {
+            return lhs.read->id < rhs.read->id;
+          })) {
+    throw std::runtime_error(
+        "[camel::CalculateCoverage] input is exptected to be sorted");
+  }
 
   if (std::filesystem::exists(pile_storage_dir)) {
     std::filesystem::remove_all(pile_storage_dir);
   }
 
   auto find_batch_last =
-      [&reads](
-          std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-              first,
-          std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-              last,
-          std::size_t const batch_cap)
-      -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
+      [&reads_overlaps](std::vector<ReadOverlapsPair>::const_iterator first,
+                        std::vector<ReadOverlapsPair>::const_iterator last,
+                        std::size_t const batch_cap)
+      -> std::vector<ReadOverlapsPair>::const_iterator {
     for (auto batch_sz = 0UL; first != last && batch_sz < batch_cap; ++first) {
-      batch_sz += (*first)->inflated_len * sizeof(Coverage);
+      batch_sz += first->read->inflated_len * sizeof(Coverage);
     }
 
     return first;
@@ -50,12 +56,24 @@ auto CalculateCoverage(
   auto timer = biosoup::Timer();
 
   auto const overlap_strings =
-      [&reads](
+      [&reads_overlaps](
           biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
-    auto query_str = reads[ovlp.lhs_id]->InflateData(
+    auto const query_read_iter = std::lower_bound(
+        reads_overlaps.cbegin(), reads_overlaps.cend(), ovlp.lhs_id,
+        [](ReadOverlapsPair const& ro, std::uint32_t const query_id) -> bool {
+          return ro.read->id < query_id;
+        });
+
+    auto const target_read_iter = std::lower_bound(
+        reads_overlaps.cbegin(), reads_overlaps.cend(), ovlp.rhs_id,
+        [](ReadOverlapsPair const& ro, std::uint32_t const target_id) -> bool {
+          return ro.read->id < target_id;
+        });
+
+    auto query_str = query_read_iter->read->InflateData(
         ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
 
-    auto target_str = reads[ovlp.rhs_id]->InflateData(
+    auto target_str = target_read_iter->read->InflateData(
         ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
 
     if (!ovlp.strand) {
@@ -77,7 +95,7 @@ auto CalculateCoverage(
         edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
   };
 
-  auto const update_coverage = [&reads, &overlap_strings, &align_strings](
+  auto const update_coverage = [&overlap_strings, &align_strings](
                                    Pile& pile,
                                    biosoup::Overlap const& ovlp) -> void {
     auto [query_substr, target_substr] = overlap_strings(ovlp);
@@ -86,8 +104,8 @@ auto CalculateCoverage(
     query_substr.clear();
     query_substr.shrink_to_fit();
 
-    auto query_id = ovlp.lhs_id;
-    auto target_id = ovlp.rhs_id;
+    auto const query_id = ovlp.lhs_id;
+    auto const target_id = ovlp.rhs_id;
 
     auto query_pos = ovlp.lhs_begin;
     auto target_pos = 0U;
@@ -136,29 +154,29 @@ auto CalculateCoverage(
   auto coverage_futures = std::vector<std::future<Pile>>();
 
   auto const calc_coverage =
-      [&read_overlap_vecs, &update_coverage](
-          std::unique_ptr<biosoup::NucleicAcid> const& read) -> Pile {
-    auto dst = Pile{.id = read->id,
-                    .seq_name = read->name,
-                    .covgs = std::vector<Coverage>(read->inflated_len)};
+      [&reads_overlaps,
+       &update_coverage](ReadOverlapsPair const& read_overlaps) -> Pile {
+    auto dst =
+        Pile{.id = read_overlaps.read->id,
+             .seq_name = read_overlaps.read->name,
+             .covgs = std::vector<Coverage>(read_overlaps.read->inflated_len)};
 
-    auto const& read_ovlps = read_overlap_vecs[read->id];
-    for (auto const& target_ovlp : read_ovlps) {
+    auto const& local_ovlps = read_overlaps.overlaps;
+    for (auto const& target_ovlp : local_ovlps) {
       auto const query_ovlp = detail::ReverseOverlap(target_ovlp);
       update_coverage(dst, query_ovlp);
     }
 
-    for (auto remote_id = 0U; remote_id < read_overlap_vecs.size();
-         ++remote_id) {
-      if (remote_id != read->id) {
-        auto const& remote_ovlps = read_overlap_vecs[remote_id];
+    for (auto const& [other_read, remote_ovlps] : reads_overlaps) {
+      if (read_overlaps.read->id != other_read->id) {
         auto iter = std::lower_bound(
-            remote_ovlps.cbegin(), remote_ovlps.cend(), read->id,
+            remote_ovlps.cbegin(), remote_ovlps.cend(), read_overlaps.read->id,
             [](biosoup::Overlap const& ovlp, std::uint32_t const query_id) {
               return ovlp.lhs_id < query_id;
             });
 
-        for (; iter != remote_ovlps.cend() && iter->lhs_id == read->id;
+        for (; iter != remote_ovlps.cend() &&
+               iter->lhs_id == read_overlaps.read->id;
              ++iter) {
           update_coverage(dst, *iter);
         }
@@ -170,9 +188,9 @@ auto CalculateCoverage(
 
   auto const calc_coverage_async =
       [&thread_pool, &calc_coverage](
-          std::reference_wrapper<std::unique_ptr<biosoup::NucleicAcid> const>
-              read) -> std::future<Pile> {
-    return thread_pool->Submit(calc_coverage, read);
+          std::reference_wrapper<ReadOverlapsPair const> read_overlaps)
+      -> std::future<Pile> {
+    return thread_pool->Submit(calc_coverage, read_overlaps);
   };
 
   auto serialize_futures = std::deque<std::future<
@@ -197,11 +215,11 @@ auto CalculateCoverage(
   {
     auto batch_id = 0U;
     auto active_piles = std::vector<Pile>();
-    for (auto align_first = reads.cbegin(); align_first != reads.cend();
-         ++batch_id) {
+    for (auto align_first = reads_overlaps.cbegin();
+         align_first != reads_overlaps.cend(); ++batch_id) {
       timer.Start();
-      auto const align_last =
-          find_batch_last(align_first, reads.cend(), detail::kAlignBatchCap);
+      auto const align_last = find_batch_last(
+          align_first, reads_overlaps.cend(), detail::kAlignBatchCap);
 
       auto const batch_sz = std::distance(align_first, align_last);
       coverage_futures.reserve(batch_sz);
@@ -251,10 +269,12 @@ auto CalculateCoverage(
           },
           std::move(active_piles), batch_id));
 
-      fmt::print(
-          stderr,
-          "[camel::CalculateCoverage]({:12.3f}) finished coverage batch\n",
-          timer.Stop(), batch_sz);
+      fmt::print(stderr,
+                 "[camel::CalculateCoverage]({:12.3f}) finished coverage "
+                 "batch; {:3.2f}\% reads covered\n",
+                 timer.Stop(),
+                 100. * std::distance(reads_overlaps.cbegin(), align_last) /
+                     reads_overlaps.size());
 
       coverage_futures.clear();
       align_first = align_last;

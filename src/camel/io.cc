@@ -88,7 +88,14 @@ auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
     std::move(vec.begin(), vec.end(), std::back_inserter(dst));
   }
 
-  dst.shrink_to_fit();
+  std::sort(dst.begin(), dst.end(),
+            [](auto const& lhs, auto const& rhs) -> bool {
+              return lhs->id < rhs->id;
+            });
+
+  decltype(dst)(std::make_move_iterator(dst.begin()),
+                std::make_move_iterator(dst.end()))
+      .swap(dst);
   return dst;
 }
 
@@ -107,13 +114,9 @@ CAMEL_EXPORT auto SerializePileBatch(std::vector<Pile>::const_iterator first,
                                      std::filesystem::path const& dst_dir,
                                      std::string const& batch_name)
     -> std::filesystem::path {
-  auto de_sz = std::size_t(0);
-
   auto binary_out = detail::BinaryOutBuffer();
   binary_out(static_cast<std::size_t>(std::distance(first, last)));
   for (auto it = first; it != last; ++it) {
-    de_sz += sizeof(it->id) + it->seq_name.size() +
-             it->covgs.size() * sizeof(Coverage);
     binary_out(*it);
   }
 

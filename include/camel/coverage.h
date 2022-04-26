@@ -15,6 +15,11 @@
 
 namespace camel {
 
+CAMEL_EXPORT struct ReadOverlapsPair {
+  std::unique_ptr<biosoup::NucleicAcid> read;
+  std::vector<biosoup::Overlap> overlaps;
+};
+
 CAMEL_EXPORT struct Coverage {
   using ValueType = std::uint16_t;
 
@@ -29,7 +34,6 @@ CAMEL_EXPORT struct Coverage {
   ValueType ins;
 };
 
-
 CAMEL_EXPORT struct Pile {
   std::uint32_t id;
   std::string seq_name;
@@ -37,8 +41,8 @@ CAMEL_EXPORT struct Pile {
 };
 
 CAMEL_EXPORT auto CalculateCoverage(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void;
 
 }  // namespace camel
