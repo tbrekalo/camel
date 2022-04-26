@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -15,9 +16,7 @@
 #include "camel/mapping.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
-#include "mimalloc-new-delete.h"
-#include "mimalloc-override.h"
-#include "mimalloc.h"
+#include "jemalloc/jemalloc.h"
 #include "thread_pool/thread_pool.hpp"
 
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
@@ -25,20 +24,36 @@ std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
 auto main(int argc, char** argv) -> int {
   auto options =
       cxxopts::Options("camel", "Camel is haplotype aware detection tool");
-  options.add_options()("t,threads", "number of threads avalable for execution",
-                        cxxopts::value<std::uint32_t>())(
-      "s,serialization_dst", "destination folder for pile serialization",
-      cxxopts::value<std::string>())(
-      "paths", "input fastq reads", cxxopts::value<std::vector<std::string>>());
+
+  /* clang-format off */
+  options.add_options()
+    ("t,threads", "number of threads avalable for execution",
+            cxxopts::value<std::uint32_t>())
+    ("s,serialization_dst", "destination folder for pile serialization",
+            cxxopts::value<std::string>()->default_value("./camel_piles"))
+    ("l,log_dst", "destination for for logging information",
+            cxxopts::value<std::string>()->default_value("./camel_log"))
+    ("paths", "input fastq reads", 
+            cxxopts::value<std::vector<std::string>>());
   options.parse_positional("paths");
+  /* clang-format on */
 
   auto const result = options.parse(argc, argv);
 
-  auto thread_pool = std::make_shared<thread_pool::ThreadPool>(
+  auto const thread_pool = std::make_shared<thread_pool::ThreadPool>(
       result["threads"].as<std::uint32_t>());
 
-  auto ser_dst_path =
+  auto const ser_dst_path =
       std::filesystem::path(result["serialization_dst"].as<std::string>());
+
+  auto const log_dst_path =
+      std::filesystem::path(result["log_dst"].as<std::string>());
+
+  if (std::filesystem::exists(log_dst_path)) {
+    std::filesystem::remove_all(log_dst_path);
+  }
+
+  std::filesystem::create_directory(log_dst_path);
 
   auto paths = std::vector<std::filesystem::path>();
   auto paths_strs = result["paths"].as<std::vector<std::string>>();
@@ -51,18 +66,110 @@ auto main(int argc, char** argv) -> int {
 
   auto timer = biosoup::Timer();
 
-  timer.Start();
-  auto const reads = camel::LoadSequences(thread_pool, paths);
-  fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
-             reads.size());
+  auto reads_overlaps = std::vector<camel::ReadOverlapsPair>();
 
-  timer.Start();
-  camel::CalculateCoverage(thread_pool, camel::MapCfg{}, reads, ser_dst_path);
-  timer.Stop();
+  {
+    timer.Start();
+    auto reads = camel::LoadSequences(thread_pool, paths);
+    fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
+               reads.size());
 
-  // timer.Start();
-  // auto const ovlp_groups = camel::FindOverlaps(thread_pool, camel::MapCfg{},
-  // reads); timer.Stop();
+    timer.Start();
+    auto const overlaps =
+        camel::FindOverlaps(thread_pool, camel::MapCfg{}, reads);
+
+    reads_overlaps.reserve(reads.size());
+    std::transform(
+        std::make_move_iterator(reads.begin()),
+        std::make_move_iterator(reads.end()),
+        std::make_move_iterator(overlaps.begin()),
+        std::back_inserter(reads_overlaps),
+        [](std::unique_ptr<biosoup::NucleicAcid> read,
+           std::vector<biosoup::Overlap> ovlps) -> camel::ReadOverlapsPair {
+          return {.read = std::move(read), .overlaps = std::move(ovlps)};
+        });
+
+    fmt::print(stderr, "[camel]({:12.3f}) tied reads with overlaps\n",
+               timer.Stop());
+  }
+
+  {
+    timer.Start();
+
+    using namespace std::placeholders;
+    using namespace std::literals;
+
+    auto ovlp_cnsts = std::vector<std::uint64_t>(reads_overlaps.size());
+    for (auto const& ro : reads_overlaps) {
+      for (auto const& ovlp : ro.overlaps) {
+        ++ovlp_cnsts[ovlp.lhs_id];
+        ++ovlp_cnsts[ovlp.rhs_id];
+      }
+    }
+
+    auto unmapped_first = std::stable_partition(
+        reads_overlaps.begin(), reads_overlaps.end(),
+        [&ovlp_cnsts](camel::ReadOverlapsPair const& ro) -> bool {
+          return ovlp_cnsts[ro.read->id] > 0UL;
+        });
+
+    auto const n_mapped = std::distance(reads_overlaps.begin(), unmapped_first);
+    auto const n_unmapped = reads_overlaps.size() - n_mapped;
+
+    // store unmapped reads
+    if (unmapped_first != reads_overlaps.end()) {
+      auto const is_fasta = unmapped_first->read->block_quality.empty();
+
+      auto const unmapped_files_log =
+          log_dst_path / ("unmapped"s + (is_fasta ? ".fa"s : ".fq"s));
+
+      auto ofstrm =
+          std::fstream(unmapped_files_log, std::ios::out | std::ios::trunc);
+
+      auto const store_fasta_impl =
+          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void {
+        ostrm << '>' << ro.read->name << '\n' << ro.read->InflateData() << '\n';
+      };
+
+      auto const store_fastq_impl =
+          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void {
+        ostrm << '@' << ro.read->name << '\n'
+              << ro.read->InflateData() << '\n'
+              << "+\n"
+              << ro.read->InflateQuality() << '\n';
+      };
+
+      using StoreFnSig = void(std::ostream&, camel::ReadOverlapsPair const&);
+      using StoreFnPtr = std::add_const_t<std::add_pointer_t<StoreFnSig>>;
+
+      static_assert(std::is_same_v<decltype(store_fasta_impl), StoreFnPtr>);
+      static_assert(std::is_same_v<decltype(store_fastq_impl), StoreFnPtr>);
+
+      auto const store_fn_impl = is_fasta ? store_fasta_impl : store_fastq_impl;
+
+      auto const store_fn = [&ofstrm, impl = store_fn_impl](
+                                camel::ReadOverlapsPair const& ro) -> void {
+        impl(ofstrm, ro);
+      };
+
+      std::for_each(std::make_move_iterator(unmapped_first),
+                    std::make_move_iterator(reads_overlaps.end()), store_fn);
+
+      reads_overlaps.erase(unmapped_first, reads_overlaps.end());
+      decltype(reads_overlaps)(std::make_move_iterator(reads_overlaps.begin()),
+                               std::make_move_iterator(reads_overlaps.end()))
+          .swap(reads_overlaps);
+    }
+
+    fmt::print(stderr, "[camel]({:12.3f}) stored {} unmapped reads\n",
+               timer.Stop(), n_unmapped);
+  }
+
+  {
+    timer.Start();
+    camel::CalculateCoverage(thread_pool, reads_overlaps, ser_dst_path);
+    timer.Stop();
+  }
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
 

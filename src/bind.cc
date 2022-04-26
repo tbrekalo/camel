@@ -74,7 +74,7 @@ NB_MODULE(camelpy_ext, m) {
       .def_readwrite("win_len", &camel::MapCfg::win_len)
       .def_readwrite("filter_p", &camel::MapCfg::filter_p);
 
-  m.def("calculate_coverage", &camel::CalculateCoverage);
+  // m.def("calculate_coverage", &camel::CalculateCoverage);
 
   nb::class_<camel::Coverage>(m, "Coverage")
       .def(nb::init<>())
