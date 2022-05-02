@@ -28,8 +28,6 @@ CAMEL_EXPORT struct Coverage {
   ValueType g;
   ValueType t;
 
-  // ValueType mat;
-  // ValueType mis;
   ValueType del;
   ValueType ins;
 };
@@ -44,6 +42,11 @@ CAMEL_EXPORT auto CalculateCoverage(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool,
     std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void;
+
+CAMEL_EXPORT [[nodiscard]] auto CallBases(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::vector<ReadOverlapsPair> const& reads_overlaps)
+    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
 }  // namespace camel
 

@@ -20,6 +20,89 @@ namespace detail {
 static constexpr std::size_t kAlignBatchCap = 1UL << 32UL;      // ~4gb
 static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL;  // ~4.3gb
 
+struct EdlibAlignResultRAII : EdlibAlignResult {
+  EdlibAlignResultRAII(EdlibAlignResult const& that) = delete;
+  auto operator=(EdlibAlignResultRAII const& that) = delete;
+
+  template <class T, class = std::enable_if_t<
+                         std::is_base_of_v<EdlibAlignResult, std::decay_t<T>>>>
+  EdlibAlignResultRAII(T&& that) {
+    *this = std::move(that);
+  }
+
+  template <class T, class = std::enable_if_t<
+                         std::is_base_of_v<EdlibAlignResult, std::decay_t<T>>>>
+  auto operator=(T&& that) -> EdlibAlignResultRAII& {
+    edlibFreeAlignResult(*static_cast<EdlibAlignResult*>(this));
+    that.status = EDLIB_STATUS_OK;
+    that.editDistance = 0;
+    that.endLocations = nullptr;
+    that.startLocations = nullptr;
+    that.alignment = nullptr;
+
+    return *this;
+  }
+
+  ~EdlibAlignResultRAII() {
+    edlibFreeAlignResult(*static_cast<EdlibAlignResult*>(this));
+  }
+};
+
+[[nodiscard]] static auto CmpReadsOvlpsPairsByReadId(
+    ReadOverlapsPair const& lhs, ReadOverlapsPair const& rhs) -> bool {
+  return lhs.read->id < rhs.read->id;
+}
+
+[[nodiscard]] static auto FindBatchLast(
+    std::vector<ReadOverlapsPair>::const_iterator first,
+    std::vector<ReadOverlapsPair>::const_iterator last, std::size_t batch_cap) {
+  for (auto batch_sz = 0UL; first != last && batch_sz < batch_cap; ++first) {
+    batch_sz += first->read->inflated_len * sizeof(Coverage);
+  }
+
+  return first;
+}
+
+[[nodiscard]] static auto OverlapStrings(
+    std::vector<ReadOverlapsPair> const& reads_overlaps,
+    biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
+  auto const query_read_iter = std::lower_bound(
+      reads_overlaps.cbegin(), reads_overlaps.cend(), ovlp.lhs_id,
+      [](ReadOverlapsPair const& ro, std::uint32_t const query_id) -> bool {
+        return ro.read->id < query_id;
+      });
+
+  auto const target_read_iter = std::lower_bound(
+      reads_overlaps.cbegin(), reads_overlaps.cend(), ovlp.rhs_id,
+      [](ReadOverlapsPair const& ro, std::uint32_t const target_id) -> bool {
+        return ro.read->id < target_id;
+      });
+
+  auto query_str = query_read_iter->read->InflateData(
+      ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
+
+  auto target_str = target_read_iter->read->InflateData(
+      ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
+
+  if (!ovlp.strand) {
+    auto rc = biosoup::NucleicAcid("", target_str);
+    rc.ReverseAndComplement();
+
+    target_str = rc.InflateData();
+  }
+
+  return std::pair(std::move(query_str), std::move(target_str));
+}
+
+[[nodiscard]] static auto AlignStrings(std::string const& query_str,
+                                       std::string const& target_str)
+    -> EdlibAlignResultRAII {
+  return edlibAlign(
+      query_str.c_str(), query_str.size(), target_str.c_str(),
+      target_str.size(),
+      edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
+}
+
 }  // namespace detail
 
 CAMEL_EXPORT auto CalculateCoverage(
@@ -27,11 +110,8 @@ CAMEL_EXPORT auto CalculateCoverage(
     std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void {
   // consider making reads_overlaps just &; not const&
-  if (!std::is_sorted(
-          reads_overlaps.cbegin(), reads_overlaps.cend(),
-          [](ReadOverlapsPair const& lhs, ReadOverlapsPair const& rhs) -> bool {
-            return lhs.read->id < rhs.read->id;
-          })) {
+  if (!std::is_sorted(reads_overlaps.cbegin(), reads_overlaps.cend(),
+                      detail::CmpReadsOvlpsPairsByReadId)) {
     throw std::runtime_error(
         "[camel::CalculateCoverage] input is exptected to be sorted");
   }
@@ -40,66 +120,15 @@ CAMEL_EXPORT auto CalculateCoverage(
     std::filesystem::remove_all(pile_storage_dir);
   }
 
-  auto find_batch_last =
-      [&reads_overlaps](std::vector<ReadOverlapsPair>::const_iterator first,
-                        std::vector<ReadOverlapsPair>::const_iterator last,
-                        std::size_t const batch_cap)
-      -> std::vector<ReadOverlapsPair>::const_iterator {
-    for (auto batch_sz = 0UL; first != last && batch_sz < batch_cap; ++first) {
-      batch_sz += first->read->inflated_len * sizeof(Coverage);
-    }
-
-    return first;
-  };
-
   std::filesystem::create_directory(pile_storage_dir);
   auto timer = biosoup::Timer();
 
-  auto const overlap_strings =
-      [&reads_overlaps](
-          biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
-    auto const query_read_iter = std::lower_bound(
-        reads_overlaps.cbegin(), reads_overlaps.cend(), ovlp.lhs_id,
-        [](ReadOverlapsPair const& ro, std::uint32_t const query_id) -> bool {
-          return ro.read->id < query_id;
-        });
-
-    auto const target_read_iter = std::lower_bound(
-        reads_overlaps.cbegin(), reads_overlaps.cend(), ovlp.rhs_id,
-        [](ReadOverlapsPair const& ro, std::uint32_t const target_id) -> bool {
-          return ro.read->id < target_id;
-        });
-
-    auto query_str = query_read_iter->read->InflateData(
-        ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
-
-    auto target_str = target_read_iter->read->InflateData(
-        ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
-
-    if (!ovlp.strand) {
-      auto rc = biosoup::NucleicAcid("", target_str);
-      rc.ReverseAndComplement();
-
-      target_str = rc.InflateData();
-    }
-
-    return std::pair(std::move(query_str), std::move(target_str));
-  };
-
-  auto const align_strings =
-      [](std::string const& query_str,
-         std::string const& target_str) -> EdlibAlignResult {
-    return edlibAlign(
-        query_str.c_str(), query_str.size(), target_str.c_str(),
-        target_str.size(),
-        edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
-  };
-
-  auto const update_coverage = [&overlap_strings, &align_strings](
-                                   Pile& pile,
-                                   biosoup::Overlap const& ovlp) -> void {
-    auto [query_substr, target_substr] = overlap_strings(ovlp);
-    auto const edlib_res_align = align_strings(query_substr, target_substr);
+  auto const update_coverage =
+      [&reads_overlaps](Pile& pile, biosoup::Overlap const& ovlp) -> void {
+    auto [query_substr, target_substr] =
+        detail::OverlapStrings(reads_overlaps, ovlp);
+    auto const edlib_res_align =
+        detail::AlignStrings(query_substr, target_substr);
 
     query_substr.clear();
     query_substr.shrink_to_fit();
@@ -147,8 +176,6 @@ CAMEL_EXPORT auto CalculateCoverage(
         }
       }
     }
-
-    edlibFreeAlignResult(edlib_res_align);
   };
 
   auto coverage_futures = std::vector<std::future<Pile>>();
@@ -218,7 +245,7 @@ CAMEL_EXPORT auto CalculateCoverage(
     for (auto align_first = reads_overlaps.cbegin();
          align_first != reads_overlaps.cend(); ++batch_id) {
       timer.Start();
-      auto const align_last = find_batch_last(
+      auto const align_last = detail::FindBatchLast(
           align_first, reads_overlaps.cend(), detail::kAlignBatchCap);
 
       auto const batch_sz = std::distance(align_first, align_last);
@@ -289,6 +316,20 @@ CAMEL_EXPORT auto CalculateCoverage(
 
   fmt::print(stderr, "[camel::CalculateCoverage]({:12.3f})\n",
              timer.elapsed_time());
+}
+
+CAMEL_EXPORT auto CallBases(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+    std::vector<ReadOverlapsPair> const& reads_overlaps)
+    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
+  if (!std::is_sorted(reads_overlaps.cbegin(), reads_overlaps.cend(),
+                      detail::CmpReadsOvlpsPairsByReadId)) {
+    throw std::runtime_error("[camel::CallBases] int is expected to be sorted");
+  }
+
+  auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
+
+  return dst;
 }
 
 }  // namespace camel
