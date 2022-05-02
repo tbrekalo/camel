@@ -21,24 +21,25 @@ static constexpr std::size_t kAlignBatchCap = 1UL << 32UL;      // ~4gb
 static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL;  // ~4.3gb
 
 struct EdlibAlignResultRAII : EdlibAlignResult {
-  EdlibAlignResultRAII(EdlibAlignResult const& that) = delete;
+  EdlibAlignResultRAII(EdlibAlignResultRAII const& that) = delete;
   auto operator=(EdlibAlignResultRAII const& that) = delete;
 
   template <class T, class = std::enable_if_t<
                          std::is_base_of_v<EdlibAlignResult, std::decay_t<T>>>>
   EdlibAlignResultRAII(T&& that) {
-    *this = std::move(that);
+    *this = std::forward<T>(that);
   }
 
   template <class T, class = std::enable_if_t<
                          std::is_base_of_v<EdlibAlignResult, std::decay_t<T>>>>
   auto operator=(T&& that) -> EdlibAlignResultRAII& {
     edlibFreeAlignResult(*static_cast<EdlibAlignResult*>(this));
-    that.status = EDLIB_STATUS_OK;
-    that.editDistance = 0;
-    that.endLocations = nullptr;
-    that.startLocations = nullptr;
-    that.alignment = nullptr;
+
+    status = std::exchange(that.status, EDLIB_STATUS_OK);
+    editDistance = std::exchange(that.editDistance, 0);
+    endLocations = std::exchange(that.endLocations, nullptr);
+    startLocations = std::exchange(that.startLocations, nullptr);
+    alignment = std::exchange(that.alignment, nullptr);
 
     return *this;
   }
