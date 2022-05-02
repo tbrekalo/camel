@@ -18,7 +18,7 @@ namespace camel {
 
 namespace detail {
 
-static constexpr std::size_t kDefaultPileStorageFileSz = 1UL << 32UL;  // ~4gb
+static constexpr std::size_t kDefaultPileStorageFileSz = 1UL << 32UL;  // 4GiB
 
 static constexpr auto kFastaSuffxies =
     std::array<char const*, 4>{".fasta", "fasta.gz", ".fa", ".fa.gz"};
@@ -52,6 +52,12 @@ static auto CreateParser(std::filesystem::path const& path)
       "[camel::detail::CreateParser] invalid file path: " + path.string());
 }
 
+static auto CmpNucleicAcidByName(
+    std::unique_ptr<biosoup::NucleicAcid> const& lhs,
+    std::unique_ptr<biosoup::NucleicAcid> const& rhs) -> bool {
+  return lhs->name < rhs->name;
+}
+
 }  // namespace detail
 
 auto LoadSequences(std::filesystem::path const& path)
@@ -61,8 +67,16 @@ auto LoadSequences(std::filesystem::path const& path)
   auto parser = detail::CreateParser(path);
   auto local_reads = parser->Parse(std::numeric_limits<std::uint64_t>::max());
 
+  std::sort(local_reads.begin(), local_reads.end(),
+            detail::CmpNucleicAcidByName);
+
+  // reindexing
+  for (auto idx = 0U; idx < local_reads.size(); ++idx) {
+    local_reads[idx]->id = idx;
+  }
+
+  dst.reserve(local_reads.size());
   std::move(local_reads.begin(), local_reads.end(), std::back_inserter(dst));
-  dst.shrink_to_fit();
 
   return dst;
 }
@@ -93,9 +107,15 @@ auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
               return lhs->id < rhs->id;
             });
 
+  // reindexing
+  for (auto idx = 0U; idx < dst.size(); ++idx) {
+    dst[idx]->id = idx;
+  }
+
   decltype(dst)(std::make_move_iterator(dst.begin()),
                 std::make_move_iterator(dst.end()))
       .swap(dst);
+
   return dst;
 }
 
@@ -109,10 +129,10 @@ static auto Load(Buff& buff, Pile& pile) -> void {
   buff(pile.id, pile.seq_name, pile.covgs);
 }
 
-CAMEL_EXPORT auto SerializePileBatch(std::vector<Pile>::const_iterator first,
-                                     std::vector<Pile>::const_iterator last,
-                                     std::filesystem::path const& dst_dir,
-                                     std::string const& batch_name)
+auto SerializePileBatch(std::vector<Pile>::const_iterator first,
+                        std::vector<Pile>::const_iterator last,
+                        std::filesystem::path const& dst_dir,
+                        std::string const& batch_name)
     -> std::filesystem::path {
   auto binary_out = detail::BinaryOutBuffer();
   binary_out(static_cast<std::size_t>(std::distance(first, last)));
@@ -207,7 +227,6 @@ auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
             binary_in(dst[i]);
           }
 
-          dst.shrink_to_fit();
           return dst;
         },
         it));
@@ -222,7 +241,10 @@ auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
       dst.begin(), dst.end(),
       [](Pile const& lhs, Pile const& rhs) -> bool { return lhs.id < rhs.id; });
 
-  dst.shrink_to_fit();
+  decltype(dst)(std::make_move_iterator(dst.begin()),
+                std::make_move_iterator(dst.end()))
+      .swap(dst);
+
   return dst;
 }
 

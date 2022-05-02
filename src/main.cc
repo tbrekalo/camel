@@ -16,6 +16,7 @@
 #include "camel/mapping.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
+#include "fmt/ostream.h"
 #include "jemalloc/jemalloc.h"
 #include "thread_pool/thread_pool.hpp"
 
@@ -113,8 +114,9 @@ auto main(int argc, char** argv) -> int {
           return ovlp_cnsts[ro.read->id] > 0UL;
         });
 
-    auto const n_mapped = std::distance(reads_overlaps.begin(), unmapped_first);
-    auto const n_unmapped = reads_overlaps.size() - n_mapped;
+    auto const n_mapped = std::distance(reads_overlaps.begin(),
+    unmapped_first); auto const n_unmapped = reads_overlaps.size() -
+    n_mapped;
 
     // store unmapped reads
     if (unmapped_first != reads_overlaps.end()) {
@@ -127,12 +129,15 @@ auto main(int argc, char** argv) -> int {
           std::fstream(unmapped_files_log, std::ios::out | std::ios::trunc);
 
       auto const store_fasta_impl =
-          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void {
-        ostrm << '>' << ro.read->name << '\n' << ro.read->InflateData() << '\n';
+          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void
+          {
+        ostrm << '>' << ro.read->name << '\n' << ro.read->InflateData() <<
+        '\n';
       };
 
       auto const store_fastq_impl =
-          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void {
+          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void
+          {
         ostrm << '@' << ro.read->name << '\n'
               << ro.read->InflateData() << '\n'
               << "+\n"
@@ -145,7 +150,8 @@ auto main(int argc, char** argv) -> int {
       static_assert(std::is_same_v<decltype(store_fasta_impl), StoreFnPtr>);
       static_assert(std::is_same_v<decltype(store_fastq_impl), StoreFnPtr>);
 
-      auto const store_fn_impl = is_fasta ? store_fasta_impl : store_fastq_impl;
+      auto const store_fn_impl = is_fasta ? store_fasta_impl :
+      store_fastq_impl;
 
       auto const store_fn = [&ofstrm, impl = store_fn_impl](
                                 camel::ReadOverlapsPair const& ro) -> void {
