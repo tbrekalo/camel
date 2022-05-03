@@ -69,6 +69,70 @@ auto main(int argc, char** argv) -> int {
 
   auto reads_overlaps = std::vector<camel::ReadOverlapsPair>();
 
+  // {
+  //   timer.Start();
+
+  //   constexpr auto kExpectedFileSize = 1UL << 26UL;  // 64MiB
+  //   auto reads = camel::LoadSequences(thread_pool, paths);
+  //   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
+  //              reads.size());
+
+  //   timer.Start();
+
+  //   auto const dst_dir_path =
+  //       std::filesystem::path("/storage2/tbrekalo/yeast_reads/");
+  //   auto dst_futures = std::vector<std::future<void>>();
+
+  //   auto const find_batch_last =
+  //       [kExpectedFileSize](
+  //           decltype(reads)::iterator first,
+  //           decltype(reads)::iterator last) -> decltype(reads)::iterator {
+  //     for (auto batch_sz = 0UL; batch_sz < kExpectedFileSize && first !=
+  //     last;
+  //          ++first) {
+  //       batch_sz += (*first)->inflated_len * 2 + (*first)->name.size();
+  //     }
+
+  //     return first;
+  //   };
+
+  //   auto batch_id = 0U;
+  //   for (auto batch_first = reads.begin(); batch_first != reads.end();
+  //        ++batch_id) {
+  //     auto const batch_last = find_batch_last(batch_first, reads.end());
+
+  //     fmt::print(stderr, "[de] batch_{:04d} - n seqs -> {}\n", batch_id,
+  //                std::distance(batch_first, batch_last));
+
+  //     dst_futures.emplace_back(thread_pool->Submit(
+  //         [&dst_dir_path](auto first, auto last,
+  //                         std::uint32_t const batch_id) -> void {
+  //           auto const dst_path =
+  //               dst_dir_path /
+  //               fmt::format("saccharomyces_cerevisiae_{:04d}.fastq",
+  //               batch_id);
+  //           auto dst_strm =
+  //               std::fstream(dst_path, std::ios::out | std::ios::trunc);
+
+  //           for (; first != last; ++first) {
+  //             fmt::print(dst_strm, "@{}\n{}\n+\n{}\n", (*first)->name,
+  //                        (*first)->InflateData(),
+  //                        (*first)->InflateQuality());
+  //           }
+  //         },
+  //         std::make_move_iterator(batch_first),
+  //         std::make_move_iterator(batch_last), batch_id));
+
+  //     batch_first = batch_last;
+  //   }
+
+  //   std::for_each(dst_futures.begin(), dst_futures.end(),
+  //                 std::mem_fn(&std::future<void>::wait));
+
+  //   fmt::print(stderr, "[camel]({:12.3f}) distributed reads\n",
+  //   timer.Stop());
+  // }
+
   {
     timer.Start();
     auto reads = camel::LoadSequences(thread_pool, paths);
@@ -114,9 +178,8 @@ auto main(int argc, char** argv) -> int {
           return ovlp_cnsts[ro.read->id] > 0UL;
         });
 
-    auto const n_mapped = std::distance(reads_overlaps.begin(),
-    unmapped_first); auto const n_unmapped = reads_overlaps.size() -
-    n_mapped;
+    auto const n_mapped = std::distance(reads_overlaps.begin(), unmapped_first);
+    auto const n_unmapped = reads_overlaps.size() - n_mapped;
 
     // store unmapped reads
     if (unmapped_first != reads_overlaps.end()) {
@@ -129,15 +192,12 @@ auto main(int argc, char** argv) -> int {
           std::fstream(unmapped_files_log, std::ios::out | std::ios::trunc);
 
       auto const store_fasta_impl =
-          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void
-          {
-        ostrm << '>' << ro.read->name << '\n' << ro.read->InflateData() <<
-        '\n';
+          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void {
+        ostrm << '>' << ro.read->name << '\n' << ro.read->InflateData() << '\n';
       };
 
       auto const store_fastq_impl =
-          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void
-          {
+          +[](std::ostream& ostrm, camel::ReadOverlapsPair const& ro) -> void {
         ostrm << '@' << ro.read->name << '\n'
               << ro.read->InflateData() << '\n'
               << "+\n"
@@ -150,8 +210,7 @@ auto main(int argc, char** argv) -> int {
       static_assert(std::is_same_v<decltype(store_fasta_impl), StoreFnPtr>);
       static_assert(std::is_same_v<decltype(store_fastq_impl), StoreFnPtr>);
 
-      auto const store_fn_impl = is_fasta ? store_fasta_impl :
-      store_fastq_impl;
+      auto const store_fn_impl = is_fasta ? store_fasta_impl : store_fastq_impl;
 
       auto const store_fn = [&ofstrm, impl = store_fn_impl](
                                 camel::ReadOverlapsPair const& ro) -> void {
@@ -173,7 +232,13 @@ auto main(int argc, char** argv) -> int {
 
   {
     timer.Start();
-    camel::CalculateCoverage(thread_pool, reads_overlaps, ser_dst_path);
+    // camel::CalculateCoverage(thread_pool, reads_overlaps, ser_dst_path);
+    auto const corrected_reads = camel::CallBases(thread_pool, reads_overlaps);
+
+    for (auto const& it : corrected_reads) {
+      fmt::print(stdout, ">{}\n{}\n", it->name, it->InflateData());
+    }
+
     timer.Stop();
   }
 
