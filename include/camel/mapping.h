@@ -25,11 +25,19 @@ CAMEL_EXPORT struct MapCfg {
 };
 
 /**
- * @brief Find overlaps between reads
+ * @brief Find all overlaps between reads
  */
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
+    -> std::vector<std::vector<biosoup::Overlap>>;
+
+/**
+ * @brief Find high quality overlaps between reads
+ */
+CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
+    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> reads)
     -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel
