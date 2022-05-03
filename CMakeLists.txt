@@ -117,6 +117,7 @@ set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/serialization.cc
 
+  ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
   ${PROJECT_SOURCE_DIR}/src/camel/coverage.cc
   ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc
   ${PROJECT_SOURCE_DIR}/src/camel/io.cc
