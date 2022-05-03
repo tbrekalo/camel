@@ -12,6 +12,7 @@
 #include "fmt/compile.h"
 #include "fmt/core.h"
 #include "fmt/ostream.h"
+#include "tsl/robin_map.h"
 
 namespace camel {
 
@@ -20,33 +21,13 @@ namespace detail {
 static constexpr std::size_t kAlignBatchCap = 1UL << 32UL;      // ~4gb
 static constexpr std::size_t kDefaultSeqGroupSz = 1UL << 32UL;  // ~4.3gb
 
-struct EdlibAlignResultRAII : EdlibAlignResult {
-  EdlibAlignResultRAII(EdlibAlignResultRAII const& that) = delete;
-  auto operator=(EdlibAlignResultRAII const& that) = delete;
+struct InsSignal {
+  using ValueType = std::uint16_t;
 
-  template <class T, class = std::enable_if_t<
-                         std::is_base_of_v<EdlibAlignResult, std::decay_t<T>>>>
-  EdlibAlignResultRAII(T&& that) {
-    *this = std::forward<T>(that);
-  }
-
-  template <class T, class = std::enable_if_t<
-                         std::is_base_of_v<EdlibAlignResult, std::decay_t<T>>>>
-  auto operator=(T&& that) -> EdlibAlignResultRAII& {
-    edlibFreeAlignResult(*static_cast<EdlibAlignResult*>(this));
-
-    status = std::exchange(that.status, EDLIB_STATUS_OK);
-    editDistance = std::exchange(that.editDistance, 0);
-    endLocations = std::exchange(that.endLocations, nullptr);
-    startLocations = std::exchange(that.startLocations, nullptr);
-    alignment = std::exchange(that.alignment, nullptr);
-
-    return *this;
-  }
-
-  ~EdlibAlignResultRAII() {
-    edlibFreeAlignResult(*static_cast<EdlibAlignResult*>(this));
-  }
+  ValueType a;
+  ValueType c;
+  ValueType t;
+  ValueType g;
 };
 
 [[nodiscard]] static auto CmpReadsOvlpsPairsByReadId(
@@ -97,7 +78,7 @@ struct EdlibAlignResultRAII : EdlibAlignResult {
 
 [[nodiscard]] static auto AlignStrings(std::string const& query_str,
                                        std::string const& target_str)
-    -> EdlibAlignResultRAII {
+    -> EdlibAlignResult {
   return edlibAlign(
       query_str.c_str(), query_str.size(), target_str.c_str(),
       target_str.size(),
@@ -133,9 +114,6 @@ CAMEL_EXPORT auto CalculateCoverage(
 
     query_substr.clear();
     query_substr.shrink_to_fit();
-
-    auto const query_id = ovlp.lhs_id;
-    auto const target_id = ovlp.rhs_id;
 
     auto query_pos = ovlp.lhs_begin;
     auto target_pos = 0U;
@@ -177,6 +155,8 @@ CAMEL_EXPORT auto CalculateCoverage(
         }
       }
     }
+
+    edlibFreeAlignResult(edlib_res_align);
   };
 
   auto coverage_futures = std::vector<std::future<Pile>>();
@@ -329,6 +309,226 @@ CAMEL_EXPORT auto CallBases(
   }
 
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
+  dst.reserve(reads_overlaps.size());
+
+  auto const update_coverage =
+      [&reads_overlaps](
+          std::vector<Coverage>& base_covgs,
+          tsl::robin_map<std::uint32_t, std::vector<detail::InsSignal>>&
+              insertions,
+          biosoup::Overlap const& ovlp, std::uint16_t ins_freq) -> void {
+    auto [query_substr, target_substr] =
+        detail::OverlapStrings(reads_overlaps, ovlp);
+
+    auto const edlib_res_align =
+        detail::AlignStrings(query_substr, target_substr);
+
+    auto query_pos = ovlp.lhs_begin;
+    auto target_pos = 0U;
+
+    for (auto i = 0U; i < edlib_res_align.alignmentLength; ++i) {
+      switch (edlib_res_align.alignment[i]) {
+        case 0:
+        case 3: {
+          /* clang-format off */
+          switch (target_substr[target_pos]) {
+            case 'A': ++base_covgs[query_pos].a;
+            case 'C': ++base_covgs[query_pos].c;
+            case 'G': ++base_covgs[query_pos].g;
+            case 'T': ++base_covgs[query_pos].t;
+            default: break;
+          }
+          /* clang-format on */
+
+          ++query_pos;
+          ++target_pos;
+
+          break;
+        }
+        case 1: {  // insertion on target
+          ++base_covgs[query_pos].del;
+          ++query_pos;
+
+          break;
+        }
+        case 2: {  // insertion on query
+          if (base_covgs[query_pos].ins < 10) {
+            ++base_covgs[query_pos].ins;
+            ++target_pos;
+          } else {
+            auto& ins_vec = insertions[query_pos];
+            if (ins_vec.empty()) {
+              ins_vec.reserve(4U);
+            }
+
+            for (auto j = 0U; i < edlib_res_align.alignmentLength &&
+                              edlib_res_align.alignment[i] == 2;
+                 ++j, ++i) {
+              if (j >= ins_vec.size()) {
+                ins_vec.emplace_back();
+              }
+
+              /* clang-format off */
+              switch (target_substr[target_pos]) {
+                case 'A': ++ins_vec[j].a; break;
+                case 'C': ++ins_vec[j].c; break;
+                case 'G': ++ins_vec[j].g; break;
+                case 'T': ++ins_vec[j].t; break;
+                default: break;
+              }
+              /* clang-format on */
+
+              ++base_covgs[query_pos].ins;
+              ++target_pos;
+            }
+
+            --i;
+          }
+
+          break;
+        }
+
+        default: {
+          break;
+        }
+      }
+    }
+  };
+
+  auto call_bases = [&reads_overlaps,
+                     &update_coverage](ReadOverlapsPair const& read_overlaps)
+      -> std::unique_ptr<biosoup::NucleicAcid> {
+    auto dst = std::unique_ptr<biosoup::NucleicAcid>();
+
+    auto base_covgs = std::vector<Coverage>(read_overlaps.read->inflated_len);
+    auto insertions =
+        tsl::robin_map<std::uint32_t, std::vector<detail::InsSignal>>();
+
+    auto const& local_ovlsp = read_overlaps.overlaps;
+    for (auto const& target_ovlp : local_ovlsp) {
+      auto const query_ovlp = detail::ReverseOverlap(target_ovlp);
+      // TODO: dynamically determine ins freq threshold
+      update_coverage(base_covgs, insertions, query_ovlp, 10U);
+    }
+
+    for (auto const& [other_read, remote_ovlps] : reads_overlaps) {
+      if (read_overlaps.read->id != other_read->id) {
+        auto iter = std::lower_bound(
+            remote_ovlps.cbegin(), remote_ovlps.cend(), read_overlaps.read->id,
+            [](biosoup::Overlap const& ovlp, std::uint32_t const query_id) {
+              return ovlp.lhs_id < query_id;
+            });
+
+        for (; iter != remote_ovlps.cend() &&
+               iter->lhs_id == read_overlaps.read->id;
+             ++iter) {
+          update_coverage(base_covgs, insertions, *iter, 10U);
+        }
+      }
+    }
+
+    // call bases
+    {
+      auto build_buff = std::string();
+      build_buff.reserve(read_overlaps.read->inflated_len * 1.1);
+
+      for (auto pos = 0U; pos < base_covgs.size(); ++pos) {
+        auto base_val = char(0);
+        auto const kBaseCovg = base_covgs[pos].a + base_covgs[pos].c +
+                               base_covgs[pos].g + base_covgs[pos].t;
+
+        if (base_covgs[pos].del >= kBaseCovg) {
+          base_val = 0;
+        } else if (2 * base_covgs[pos].a > kBaseCovg) {
+          base_val = 'A';
+        } else if (2 * base_covgs[pos].c > kBaseCovg) {
+          base_val = 'C';
+        } else if (2 * base_covgs[pos].g > kBaseCovg) {
+          base_val = 'G';
+        } else if (2 * base_covgs[pos].t > kBaseCovg) {
+          base_val = 'T';
+        } else {
+          base_val = biosoup::kNucleotideDecoder[read_overlaps.read->Code(pos)];
+        }
+
+        if (base_val > 0) {
+          build_buff.push_back(base_val);
+        }
+
+        if (1.2 * base_covgs[pos].ins >= kBaseCovg) {
+          for (auto const it : insertions[pos]) {
+            auto max_val = std::max({it.a, it.c, it.g, it.t});
+            if (max_val == it.a) {
+              build_buff.push_back('A');
+              continue;
+            }
+            if (max_val == it.c) {
+              build_buff.push_back('C');
+              continue;
+            }
+            if (max_val == it.g) {
+              build_buff.push_back('G');
+              continue;
+            }
+            if (max_val == it.t) {
+              build_buff.push_back('T');
+              continue;
+            }
+          }
+        }
+      }
+
+      dst = std::make_unique<biosoup::NucleicAcid>(read_overlaps.read->name,
+                                                   build_buff);
+    }
+
+    return dst;
+  };
+
+  auto base_call_futures =
+      std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
+
+  auto const call_bases_async =
+      [&thread_pool, &call_bases](
+          std::reference_wrapper<ReadOverlapsPair const> read_overlaps)
+      -> std::future<std::unique_ptr<biosoup::NucleicAcid>> {
+    return thread_pool->Submit(call_bases, read_overlaps);
+  };
+
+  auto timer = biosoup::Timer();
+  for (auto batch_first = reads_overlaps.cbegin();
+       batch_first != reads_overlaps.cend();) {
+    timer.Start();
+    auto const batch_last = detail::FindBatchLast(
+        batch_first, reads_overlaps.cend(), detail::kAlignBatchCap);
+
+    auto const batch_sz = std::distance(batch_first, batch_last);
+    base_call_futures.reserve(batch_sz);
+
+    std::transform(batch_first, batch_last,
+                   std::back_inserter(base_call_futures), call_bases_async);
+
+    fmt::print(stderr,
+               "[camel::CallBases] estimateing correct bases for {} reads\n",
+               batch_sz);
+
+    std::transform(
+        base_call_futures.begin(), base_call_futures.end(),
+        std::back_inserter(dst),
+        std::mem_fn(&std::future<std::unique_ptr<biosoup::NucleicAcid>>::get));
+
+    fmt::print(stderr,
+               "[camel::CallBases]({:12.3f}) finisehd base call batch; "
+               "{:3.2f}\% reads covered\n",
+               timer.Stop(),
+               100. * std::distance(reads_overlaps.cbegin(), batch_last) /
+                   reads_overlaps.size());
+
+    base_call_futures.clear();
+    batch_first = batch_last;
+  }
+
+  fmt::print(stderr, "[camel::CallBases]({:12.3f})\n", timer.elapsed_time());
 
   return dst;
 }
