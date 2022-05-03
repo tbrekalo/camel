@@ -160,7 +160,9 @@ if (CAMEL_BUILD_EXE)
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe
     PRIVATE 
-      camel cxxopts::cxxopts jemalloc::jemalloc fmt::fmt)
+      camel cxxopts::cxxopts 
+      jemalloc::jemalloc 
+      fmt::fmt)
 endif ()
 
 if (CAMEL_BUILD_PYTHON)
