@@ -37,7 +37,7 @@ CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
  */
 CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> reads)
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel

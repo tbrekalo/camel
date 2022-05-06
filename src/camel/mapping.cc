@@ -21,10 +21,10 @@ static constexpr auto kMapBatchCap = 1UL << 30UL;
 static constexpr auto kCoverageFactor = 12UL;
 
 static auto FindBatchLast(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>>::iterator first,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>>::iterator last,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator first,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator last,
     std::uint64_t batch_cap)
-    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::iterator {
+    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
   for (auto batch_sz = 0UL; batch_sz < batch_cap && first != last; ++first) {
     batch_sz += (*first)->inflated_len;
   }
@@ -279,9 +279,9 @@ auto FindOverlaps(
   return read_ovlps;
 }
 
-CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
+auto FindConfidentOverlaps(
     std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& src_reads)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto overlaps = std::vector<std::vector<biosoup::Overlap>>(src_reads.size());
   auto estimated_covgs = std::vector<std::uint64_t>(src_reads.size());
@@ -292,13 +292,17 @@ CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
       ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
 
-  auto const store_ovlp =
-      [&overlaps, &estimated_covgs](biosoup::Overlap const& ovlp) -> void {
-    estimated_covgs[ovlp.lhs_id] += ovlp.lhs_end - ovlp.lhs_end;
-    estimated_covgs[ovlp.rhs_id] += ovlp.rhs_end - ovlp.rhs_begin;
+  auto const store_ovlp = [src_reads, &overlaps, &estimated_covgs](
+                              biosoup::Overlap const& ovlp) -> void {
+    if (detail::DetermineOverlapType(ovlp, src_reads[ovlp.lhs_id]->inflated_len,
+                                     src_reads[ovlp.rhs_id]->inflated_len) >
+        detail::OverlapType::kUnclassified) {
+      estimated_covgs[ovlp.lhs_id] += ovlp.lhs_end - ovlp.lhs_end;
+      estimated_covgs[ovlp.rhs_id] += ovlp.rhs_end - ovlp.rhs_begin;
 
-    overlaps[ovlp.lhs_id].push_back(ovlp);
-    overlaps[ovlp.rhs_id].push_back(detail::ReverseOverlap(ovlp));
+      overlaps[ovlp.lhs_id].push_back(ovlp);
+      overlaps[ovlp.rhs_id].push_back(detail::ReverseOverlap(ovlp));
+    }
   };
 
   auto const map_sequence =
@@ -394,4 +398,5 @@ CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
 
   return overlaps;
 }
+
 }  // namespace camel
