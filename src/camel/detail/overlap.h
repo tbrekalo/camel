@@ -12,13 +12,15 @@ namespace camel::detail {
  * @brief specifies overlap types
  */
 enum class OverlapType : std::uint8_t {
+  kInvalid,
+  kUnclassified,
+
   kInternal,      ///< overlap has a deep location in one of the sequnces
   kLhsContained,  ///< rhs sequence spans over lhs sequence
   kRhsContained,  ///< lhs sequence spans over rhs sequence
   kLhsToRhs,      ///< lhs sequence connects to rhs sequence
   kRhsToLhs,      ///< rhs sequence connects to lhs sequence
 
-  kUnclassified
 };
 
 /**
