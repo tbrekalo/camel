@@ -21,7 +21,7 @@ auto DetermineOverlapType(biosoup::Overlap const ovlp,
       std::min(lhs_begin, rhs_begin) +
       std::max(lhs_seq_size - lhs_end, rhs_seq_size - rhs_end);
 
-  if ((1.0 * ovlp_size) / (ovlp_size + overhang) <= 0.2) {
+  if ((1.0 * ovlp_size) / (ovlp_size + overhang) <= 0.1) {
     return OverlapType::kInvalid;
   }
 

@@ -44,8 +44,8 @@ def plot_rng_region(pile: cp.Pile, dst_folder: Path, win_len: int = 250):
   print(f'[camel::plot::plot_rng_region] saved {dst_path}', file=sys.stderr)
 
 
-tp_handle = cp.create_thread_pool(32)
-piles: List[cp.Pile] = cp.deserialize_piles(tp_handle, "./camel_piles")
+state = cp.init_state(32, './camel_log')
+piles: List[cp.Pile] = cp.deserialize_piles(state, "./camel_piles")
 
 print(f'[camel::plot] loaded {len(piles)} piles', file=sys.stderr)
 

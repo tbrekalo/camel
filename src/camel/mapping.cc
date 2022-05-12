@@ -118,7 +118,7 @@ MapCfg::MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p)
     : kmer_len(kmer_len), win_len(win_len), filter_p(filter_p) {}
 
 auto FindOverlaps(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    State& state, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>> {
   for (auto idx = 1U; idx < reads.size(); ++idx) {
@@ -131,8 +131,8 @@ auto FindOverlaps(
 
   auto read_ovlps = std::vector<std::vector<biosoup::Overlap>>(reads.size());
 
-  auto minimizer_engine =
-      ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
+  auto minimizer_engine = ram::MinimizerEngine(
+      state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
 
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
 
@@ -189,7 +189,7 @@ auto FindOverlaps(
   };
 
   auto const map_sequence_async =
-      [&thread_pool, &map_sequence](
+      [&thread_pool = state.thread_pool, &map_sequence](
           std::reference_wrapper<std::unique_ptr<biosoup::NucleicAcid> const>
               read) -> std::future<std::vector<biosoup::Overlap>> {
     return thread_pool->Submit(map_sequence, read);
@@ -245,7 +245,7 @@ auto FindOverlaps(
       map_futures.clear();
     }
 
-    defrag_futures.emplace_back(thread_pool->Submit(
+    defrag_futures.emplace_back(state.thread_pool->Submit(
         [&read_ovlps](
             std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
                 first,
@@ -280,7 +280,7 @@ auto FindOverlaps(
 }
 
 auto FindConfidentOverlaps(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    State& state, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& src_reads)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto overlaps = std::vector<std::vector<biosoup::Overlap>>(src_reads.size());
@@ -288,11 +288,11 @@ auto FindConfidentOverlaps(
 
   auto sweep_futures = std::vector<std::future<std::uint64_t>>();
 
-  auto minimizer_engine =
-      ram::MinimizerEngine(thread_pool, map_cfg.kmer_len, map_cfg.win_len);
+  auto minimizer_engine = ram::MinimizerEngine(
+      state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
 
-  auto const store_ovlp = [src_reads, &overlaps, &estimated_covgs](
+  auto const store_ovlp = [&src_reads, &overlaps, &estimated_covgs](
                               biosoup::Overlap const& ovlp) -> void {
     if (detail::DetermineOverlapType(ovlp, src_reads[ovlp.lhs_id]->inflated_len,
                                      src_reads[ovlp.rhs_id]->inflated_len) >
@@ -312,7 +312,7 @@ auto FindConfidentOverlaps(
   };
 
   auto const map_sequence_async =
-      [&thread_pool, &map_sequence](
+      [&thread_pool = state.thread_pool, &map_sequence](
           std::reference_wrapper<std::unique_ptr<biosoup::NucleicAcid> const>
               read) -> std::future<std::vector<biosoup::Overlap>> {
     return thread_pool->Submit(map_sequence, read);
@@ -328,10 +328,11 @@ auto FindConfidentOverlaps(
     minimizer_engine.Minimize(minimize_first, minimize_last, true);
     minimizer_engine.Filter(0.001);
 
-    fmt::print(stderr,
-               "[camel::SnpErrorCorrect]({:12.3f}) minimized {} / {} reads\n",
-               timer.Stop(), std::distance(src_reads.begin(), minimize_last),
-               src_reads.size());
+    fmt::print(
+        stderr,
+        "[camel::FindConfidentOverlaps]({:12.3f}) minimized {} / {} reads\n",
+        timer.Stop(), std::distance(src_reads.begin(), minimize_last),
+        src_reads.size());
 
     for (auto map_first = src_reads.begin(); map_first != minimize_last;) {
       timer.Start();
@@ -350,10 +351,11 @@ auto FindConfidentOverlaps(
 
       map_futures.clear();
 
-      fmt::print(stderr,
-                 "[camel::SnpErrorCorrect]({:12.3f}) mapped {} / {} reads\n",
-                 timer.Stop(), std::distance(src_reads.begin(), map_last),
-                 std::distance(src_reads.begin(), minimize_last));
+      fmt::print(
+          stderr,
+          "[camel::FindConfidentOverlaps]({:12.3f}) mapped {} / {} reads\n",
+          timer.Stop(), std::distance(src_reads.begin(), map_last),
+          std::distance(src_reads.begin(), minimize_last));
 
       {
         timer.Start();
@@ -364,7 +366,7 @@ auto FindConfidentOverlaps(
         for (; first != last; ++first) {
           if (estimated_covgs[(*first)->id] >=
               detail::kCoverageFactor * (*first)->inflated_len) {
-            sweep_futures.emplace_back(thread_pool->Submit(
+            sweep_futures.emplace_back(state.thread_pool->Submit(
                 [&overlaps,
                  &estimated_covgs](std::uint32_t const id) -> std::uint64_t {
                   auto const [estimated_covg, discard_cnt] =
@@ -384,10 +386,11 @@ auto FindConfidentOverlaps(
 
         sweep_futures.clear();
 
-        fmt::print(stderr,
-                   "[camel::SnpErrorCorrect]({:12.3f}) swept {} low quality "
-                   "overlaps\n",
-                   timer.Stop(), n_discards);
+        fmt::print(
+            stderr,
+            "[camel::FindConfidentOverlaps]({:12.3f}) swept {} low quality "
+            "overlaps\n",
+            timer.Stop(), n_discards);
       }
 
       map_first = map_last;
