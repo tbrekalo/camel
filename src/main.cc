@@ -15,10 +15,11 @@
 #include "camel/detail/overlap.h"
 #include "camel/io.h"
 #include "camel/mapping.h"
+#include "camel/state.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
 #include "fmt/ostream.h"
-// #include "jemalloc/jemalloc.h"
+#include "jemalloc/jemalloc.h"
 #include "thread_pool/thread_pool.hpp"
 
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
@@ -42,112 +43,54 @@ auto main(int argc, char** argv) -> int {
 
   auto const result = options.parse(argc, argv);
 
-  auto const thread_pool = std::make_shared<thread_pool::ThreadPool>(
-      result["threads"].as<std::uint32_t>());
+  auto state =
+      camel::State{.thread_pool = std::make_shared<thread_pool::ThreadPool>(
+                       result["threads"].as<std::uint32_t>()),
+                   .log_path = result["log_dst"].as<std::string>()};
 
   auto const ser_dst_path =
       std::filesystem::path(result["serialization_dst"].as<std::string>());
 
-  auto const log_dst_path =
-      std::filesystem::path(result["log_dst"].as<std::string>());
-
-  if (std::filesystem::exists(log_dst_path)) {
-    std::filesystem::remove_all(log_dst_path);
+  if (std::filesystem::exists(state.log_path)) {
+    std::filesystem::remove_all(state.log_path);
   }
 
-  std::filesystem::create_directory(log_dst_path);
+  std::filesystem::create_directory(state.log_path);
 
   auto paths = std::vector<std::filesystem::path>();
-  auto paths_strs = result["paths"].as<std::vector<std::string>>();
-  std::transform(std::make_move_iterator(paths_strs.begin()),
-                 std::make_move_iterator(paths_strs.end()),
-                 std::back_inserter(paths),
-                 [](std::string&& path_str) -> std::filesystem::path {
-                   return std::filesystem::path(std::move(path_str));
-                 });
+
+  {
+    auto paths_strs = result["paths"].as<std::vector<std::string>>();
+    for (auto const& it : paths_strs) {
+      auto it_path = std::filesystem::path(std::move(it));
+      if (std::filesystem::is_regular_file(it_path)) {
+        paths.emplace_back(std::move(it_path));
+      } else if (std::filesystem::is_directory(it_path)) {
+        for (auto dir_entry : std::filesystem::recursive_directory_iterator(
+                 std::move(it_path))) {
+          if (std::filesystem::is_regular_file(dir_entry)) {
+            paths.emplace_back(std::move(dir_entry));
+          }
+        }
+      }
+    }
+  }
+
+  decltype(paths)(std::make_move_iterator(paths.begin()),
+                  std::make_move_iterator(paths.end()))
+      .swap(paths);
 
   auto timer = biosoup::Timer();
-
   auto reads_overlaps = std::vector<camel::ReadOverlapsPair>();
-
-  // {
-  //   timer.Start();
-
-  //   constexpr auto kExpectedFileSize = 1UL << 26UL;  // 64MiB
-  //   auto reads = camel::LoadSequences(thread_pool, paths);
-  //   fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
-  //              reads.size());
-
-  //   timer.Start();
-
-  //   auto const dst_dir_path =
-  //       std::filesystem::path("/storage2/tbrekalo/yeast_reads/");
-  //   auto dst_futures = std::vector<std::future<void>>();
-
-  //   auto const find_batch_last =
-  //       [kExpectedFileSize](
-  //           decltype(reads)::iterator first,
-  //           decltype(reads)::iterator last) -> decltype(reads)::iterator {
-  //     for (auto batch_sz = 0UL; batch_sz < kExpectedFileSize && first !=
-  //     last;
-  //          ++first) {
-  //       batch_sz += (*first)->inflated_len * 2 + (*first)->name.size();
-  //     }
-
-  //     return first;
-  //   };
-
-  //   auto batch_id = 0U;
-  //   for (auto batch_first = reads.begin(); batch_first != reads.end();
-  //        ++batch_id) {
-  //     auto const batch_last = find_batch_last(batch_first, reads.end());
-
-  //     fmt::print(stderr, "[de] batch_{:04d} - n seqs -> {}\n", batch_id,
-  //                std::distance(batch_first, batch_last));
-
-  //     dst_futures.emplace_back(thread_pool->Submit(
-  //         [&dst_dir_path](auto first, auto last,
-  //                         std::uint32_t const batch_id) -> void {
-  //           auto const dst_path =
-  //               dst_dir_path /
-  //               fmt::format("saccharomyces_cerevisiae_{:04d}.fastq",
-  //               batch_id);
-  //           auto dst_strm =
-  //               std::fstream(dst_path, std::ios::out | std::ios::trunc);
-
-  //           for (; first != last; ++first) {
-  //             fmt::print(dst_strm, "@{}\n{}\n+\n{}\n", (*first)->name,
-  //                        (*first)->InflateData(),
-  //                        (*first)->InflateQuality());
-  //           }
-  //         },
-  //         std::make_move_iterator(batch_first),
-  //         std::make_move_iterator(batch_last), batch_id));
-
-  //     batch_first = batch_last;
-  //   }
-
-  //   std::for_each(dst_futures.begin(), dst_futures.end(),
-  //                 std::mem_fn(&std::future<void>::wait));
-
-  //   fmt::print(stderr, "[camel]({:12.3f}) distributed reads\n",
-  //   timer.Stop());
-  // }
 
   {
     timer.Start();
-    auto reads = camel::LoadSequences(thread_pool, paths);
+    auto reads = camel::LoadSequences(state, paths);
     fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
                reads.size());
 
-    // {
-    //   timer.Start();
-    //   auto res = camel::SnpErrorCorrect(thread_pool, std::move(reads));
-    //   timer.Stop();
-    // }
     timer.Start();
-    auto overlaps =
-        camel::FindConfidentOverlaps(thread_pool, camel::MapCfg{}, reads);
+    auto overlaps = camel::FindConfidentOverlaps(state, camel::MapCfg{}, reads);
 
     auto ovlp_futures = std::vector<std::future<void>>();
     ovlp_futures.reserve(reads.size());
@@ -178,10 +121,25 @@ auto main(int argc, char** argv) -> int {
       std::swap(overlaps[target_id], dst);
     };
 
-    for (auto target_id = 0U; target_id < reads.size(); ++target_id) {
-      ovlp_futures.emplace_back(
-          thread_pool->Submit(transform_target, target_id));
+    auto const transform_range = [&transform_target](
+                                     std::uint32_t const first_id,
+                                     std::uint32_t const last_id) -> void {
+      for (auto target_id = first_id; target_id != last_id; ++target_id) {
+        transform_target(target_id);
+      }
+    };
+
+    for (auto target_id = 0U; target_id < reads.size(); target_id += 1000U) {
+      ovlp_futures.emplace_back(state.thread_pool->Submit(
+          transform_range, target_id,
+          std::min(target_id + 1000U,
+                   static_cast<std::uint32_t>(reads.size()))));
     }
+
+    // for (auto target_id = 0U; target_id < reads.size(); ++target_id) {
+    //   ovlp_futures.emplace_back(
+    //       thread_pool->Submit(transform_target, target_id));
+    // }
 
     std::for_each(ovlp_futures.begin(), ovlp_futures.end(),
                   std::mem_fn(&std::future<void>::get));
@@ -237,7 +195,7 @@ auto main(int argc, char** argv) -> int {
       auto const is_fasta = unmapped_first->read->block_quality.empty();
 
       auto const unmapped_files_log =
-          log_dst_path / ("unmapped"s + (is_fasta ? ".fa"s : ".fq"s));
+          state.log_path / ("unmapped"s + (is_fasta ? ".fa"s : ".fq"s));
 
       auto ofstrm =
           std::fstream(unmapped_files_log, std::ios::out | std::ios::trunc);
@@ -282,7 +240,7 @@ auto main(int argc, char** argv) -> int {
 
     {
       timer.Start();
-      camel::CalculateCoverage(thread_pool, reads_overlaps, ser_dst_path);
+      camel::CalculateCoverage(state, reads_overlaps, ser_dst_path);
       timer.Stop();
     }
   }

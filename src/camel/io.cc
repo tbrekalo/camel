@@ -81,7 +81,7 @@ auto LoadSequences(std::filesystem::path const& path)
   return dst;
 }
 
-auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+auto LoadSequences(State& state,
                    std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
   auto parse_futures = std::vector<
@@ -90,7 +90,7 @@ auto LoadSequences(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
 
   std::transform(
       paths.cbegin(), paths.cend(), std::back_inserter(parse_futures),
-      [&thread_pool](std::filesystem::path const& path) {
+      [&thread_pool = state.thread_pool](std::filesystem::path const& path) {
         return thread_pool->Submit(
             [](std::filesystem::path const& p) { return LoadSequences(p); },
             path);
@@ -146,15 +146,12 @@ auto SerializePileBatch(std::vector<Pile>::const_iterator first,
   return dst_path;
 }
 
-auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-                    std::vector<Pile> const& piles,
+auto SerializePiles(State& state, std::vector<Pile> const& piles,
                     std::filesystem::path const& dst_dir) -> void {
-  SerializePiles(std::move(thread_pool), piles, dst_dir,
-                 detail::kDefaultPileStorageFileSz);
+  SerializePiles(state, piles, dst_dir, detail::kDefaultPileStorageFileSz);
 }
 
-auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-                    std::vector<Pile> const& piles,
+auto SerializePiles(State& state, std::vector<Pile> const& piles,
                     std::filesystem::path const& dst_dir,
                     std::size_t const expected_file_sz) -> void {
   using PileConstIter = std::vector<Pile>::const_iterator;
@@ -192,8 +189,8 @@ auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
       auto const batch_end =
           find_batch_end(batch_begin, piles.cend(), expected_file_sz);
 
-      ser_futures.emplace_back(thread_pool->Submit(serialize_batch, batch_begin,
-                                                   batch_end, batch_nxt_id++));
+      ser_futures.emplace_back(state.thread_pool->Submit(
+          serialize_batch, batch_begin, batch_end, batch_nxt_id++));
 
       batch_begin = batch_end;
     }
@@ -204,14 +201,14 @@ auto SerializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
   }
 }
 
-auto DeserializePiles(std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-                      std::filesystem::path const& src_dir)
+auto DeserializePiles(State& state, std::filesystem::path const& src_dir)
     -> std::vector<Pile> {
   auto dst = std::vector<Pile>();
 
   auto pile_futures = std::vector<std::future<std::vector<Pile>>>();
   for (auto const& it : std::filesystem::directory_iterator(src_dir)) {
-    pile_futures.emplace_back(thread_pool->Submit(
+    pile_futures.emplace_back(
+      state.thread_pool->Submit(
         [](std::filesystem::directory_entry const& dir_entry)
             -> std::vector<Pile> {
           auto dst = std::vector<Pile>();

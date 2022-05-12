@@ -88,8 +88,7 @@ struct InsSignal {
 }  // namespace detail
 
 CAMEL_EXPORT auto CalculateCoverage(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<ReadOverlapsPair> const& reads_overlaps,
+    State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void {
   // consider making reads_overlaps just &; not const&
   if (!std::is_sorted(reads_overlaps.cbegin(), reads_overlaps.cend(),
@@ -195,7 +194,7 @@ CAMEL_EXPORT auto CalculateCoverage(
   };
 
   auto const calc_coverage_async =
-      [&thread_pool, &calc_coverage](
+      [&thread_pool = state.thread_pool, &calc_coverage](
           std::reference_wrapper<ReadOverlapsPair const> read_overlaps)
       -> std::future<Pile> {
     return thread_pool->Submit(calc_coverage, read_overlaps);
@@ -250,7 +249,7 @@ CAMEL_EXPORT auto CalculateCoverage(
                      std::back_inserter(active_piles),
                      std::mem_fn(&std::future<Pile>::get));
 
-      serialize_futures.emplace_back(thread_pool->Submit(
+      serialize_futures.emplace_back(state.thread_pool->Submit(
           [&pile_storage_dir](std::vector<Pile> batch_piles,
                               std::size_t batch_id)
               -> std::tuple<std::filesystem::path, std::size_t, std::size_t,
@@ -298,6 +297,5 @@ CAMEL_EXPORT auto CalculateCoverage(
   fmt::print(stderr, "[camel::CalculateCoverage]({:12.3f})\n",
              timer.elapsed_time());
 }
-
 
 }  // namespace camel

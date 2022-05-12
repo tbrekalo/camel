@@ -68,7 +68,7 @@ conan_cmake_configure(
   REQUIRES 
     cxxopts/3.0.0 
     fmt/8.1.1
-    # jemalloc/5.2.1
+    jemalloc/5.2.1
     tsl-robin-map/1.0.1
     zstd/1.5.2
   GENERATORS 
@@ -121,7 +121,7 @@ set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/coverage.cc
   ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc
   ${PROJECT_SOURCE_DIR}/src/camel/io.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/utils.cc)
+  ${PROJECT_SOURCE_DIR}/src/camel/state.cc)
 
 add_library(camel ${camel_SOURCES})
 add_library(${PROJECT_NAME}::camel ALIAS camel)
@@ -156,13 +156,13 @@ target_include_directories(camel PUBLIC
 
 if (CAMEL_BUILD_EXE) 
   find_package(cxxopts)
-  # find_package(jemalloc)
+  find_package(jemalloc)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe
     PRIVATE 
       camel cxxopts::cxxopts 
-      # jemalloc::jemalloc 
+      jemalloc::jemalloc 
       fmt::fmt)
 endif ()
 
