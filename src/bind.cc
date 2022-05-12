@@ -1,13 +1,13 @@
 #include "camel/coverage.h"
 #include "camel/io.h"
 #include "camel/mapping.h"
+#include "camel/state.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"
 #include "nanobind/stl/string.h"
 #include "nanobind/stl/tuple.h"
 #include "nanobind/stl/unique_ptr.h"
 #include "nanobind/stl/vector.h"
-
 namespace nb = nanobind;
 
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects{0U};
@@ -15,13 +15,16 @@ std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects{0U};
 NB_MODULE(camelpy_ext, m) {
   using namespace nb::literals;
 
-  nb::class_<thread_pool::ThreadPool>(m, "ThreadPool")
-      .def(nb::init<std::size_t>());
+  nb::class_<camel::State>(m, "State").def(nb::init<>());
 
-  m.def("create_thread_pool",
-        [](std::size_t const n) -> std::shared_ptr<thread_pool::ThreadPool> {
-          return std::make_shared<thread_pool::ThreadPool>(n);
-        });
+  m.def(
+      "init_state",
+      [](std::uint32_t const n_threads,
+         std::string const& log_path) -> camel::State {
+        return camel::State{
+            .thread_pool = std::make_shared<thread_pool::ThreadPool>(n_threads),
+            .log_path = log_path};
+      });
 
   nb::class_<biosoup::NucleicAcid>(m, "NucleicAcid")
       .def(nb::init<const std::string&, const std::string&>())
@@ -51,8 +54,7 @@ NB_MODULE(camelpy_ext, m) {
   });
 
   m.def("load_sequences",
-        [](std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-           std::vector<std::string> const& paths_strs)
+        [](camel::State& state, std::vector<std::string> const& paths_strs)
             -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
           auto paths = std::vector<std::filesystem::path>();
 
@@ -63,7 +65,7 @@ NB_MODULE(camelpy_ext, m) {
                            return str;
                          });
 
-          return camel::LoadSequences(std::move(thread_pool), paths);
+          return camel::LoadSequences(state, paths);
         });
 
   nb::class_<camel::MapCfg>(m, "MapCfg")
@@ -94,17 +96,14 @@ NB_MODULE(camelpy_ext, m) {
       .def_readonly("coverages", &camel::Pile::covgs);
 
   m.def("serialize_piles",
-        [](std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-           std::vector<camel::Pile> const& piles,
+        [](camel::State& state, std::vector<camel::Pile> const& piles,
            std::string const& path) -> void {
-          camel::SerializePiles(std::move(thread_pool), piles,
-                                std::filesystem::path(path));
+          camel::SerializePiles(state, piles, std::filesystem::path(path));
         });
 
   m.def("deserialize_piles",
-        [](std::shared_ptr<thread_pool::ThreadPool> thread_pool,
+        [](camel::State& state,
            std::string const& path) -> std::vector<camel::Pile> {
-          return camel::DeserializePiles(std::move(thread_pool),
-                                         std::filesystem::path(path));
+          return camel::DeserializePiles(state, std::filesystem::path(path));
         });
 }

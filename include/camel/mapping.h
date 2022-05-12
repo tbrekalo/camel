@@ -7,6 +7,7 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
+#include "camel/state.h"
 #include "thread_pool/thread_pool.hpp"
 
 /* export header */
@@ -24,11 +25,14 @@ CAMEL_EXPORT struct MapCfg {
   double filter_p = 0.001;
 };
 
+// TODO: write overlap storage class
+
 /**
  * @brief Find all overlaps between reads
  */
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    State& state,
+    MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>>;
 
@@ -36,7 +40,8 @@ CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
  * @brief Find high quality overlaps between reads
  */
 CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool, MapCfg const map_cfg,
+    State& state,
+    MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>>;
 

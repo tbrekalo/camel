@@ -7,6 +7,7 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "camel/coverage.h"
+#include "camel/state.h"
 #include "thread_pool/thread_pool.hpp"
 
 /* export header */
@@ -31,8 +32,7 @@ CAMEL_EXPORT [[nodiscard]] auto LoadSequences(std::filesystem::path const& path)
  *
  */
 CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<std::filesystem::path> const& paths)
+    State& state, std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
 /**
@@ -52,26 +52,22 @@ CAMEL_EXPORT auto SerializePileBatch(std::vector<Pile>::const_iterator first,
  * GiB)
  *
  */
-CAMEL_EXPORT auto SerializePiles(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<Pile> const& piles, std::filesystem::path const& dst_dir)
-    -> void;
+CAMEL_EXPORT auto SerializePiles(State& state, std::vector<Pile> const& piles,
+                                 std::filesystem::path const& dst_dir) -> void;
 
 /**
  * @brief serialize coverage piles to disk using specified expected file size
  *
  */
-CAMEL_EXPORT auto SerializePiles(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<Pile> const& piles, std::filesystem::path const& dst_dir,
-    std::size_t const expected_file_sz) -> void;
+CAMEL_EXPORT auto SerializePiles(State& state, std::vector<Pile> const& piles,
+                                 std::filesystem::path const& dst_dir,
+                                 std::size_t const expected_file_sz) -> void;
 
 /**
  * @brief deserialize piles from source folder
  */
 CAMEL_EXPORT [[nodiscard]] auto DeserializePiles(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::filesystem::path const& src_dir) -> std::vector<Pile>;
+    State& state, std::filesystem::path const& src_dir) -> std::vector<Pile>;
 
 // TODO: consider writing single threaded API
 

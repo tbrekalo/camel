@@ -1,5 +1,6 @@
 #include "camel/coverage.h"
 #include "camel/io.h"
+#include "camel/state.h"
 #include "catch2/catch_test_macros.hpp"
 
 // TODO: snif... snif...
@@ -32,14 +33,22 @@ static auto const kTestDumpPath = std::filesystem::path("./test_dump");
 }  // namespace camel::test
 
 TEST_CASE("camel pile serialization", "[camel][pile][coverage][serialize]") {
-  auto thread_pool = std::make_shared<thread_pool::ThreadPool>(1);
+  auto state =
+      camel::State{.thread_pool = std::make_shared<thread_pool::ThreadPool>(1),
+                   .log_path = "./temp_camel_test_log"};
+
+  if (std::filesystem::exists(state.log_path)) {
+    std::filesystem::remove(state.log_path);
+  }
+  std::filesystem::create_directory(state.log_path);
+
   auto const src_piles = std::vector<camel::Pile>{camel::test::kTestPile00,
                                                   camel::test::kTestPile01};
 
-  camel::SerializePiles(thread_pool, src_piles, camel::test::kTestDumpPath);
+  camel::SerializePiles(state, src_piles, camel::test::kTestDumpPath);
 
   auto const read_piles =
-      camel::DeserializePiles(thread_pool, camel::test::kTestDumpPath);
+      camel::DeserializePiles(state, camel::test::kTestDumpPath);
 
   REQUIRE(src_piles.size() == read_piles.size());
   for (auto i = 0UL; i < src_piles.size(); ++i) {

@@ -7,6 +7,7 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "camel/mapping.h"
+#include "camel/state.h"
 #include "thread_pool/thread_pool.hpp"
 
 /* export header */
@@ -39,8 +40,7 @@ CAMEL_EXPORT struct Pile {
 };
 
 CAMEL_EXPORT auto CalculateCoverage(
-    std::shared_ptr<thread_pool::ThreadPool> thread_pool,
-    std::vector<ReadOverlapsPair> const& reads_overlaps,
+    State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void;
 
 }  // namespace camel
