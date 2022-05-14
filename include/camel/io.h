@@ -36,6 +36,22 @@ CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
 /**
+ * @brief multithreaded sequence storage
+ */
+CAMEL_EXPORT auto StoreSequences(
+    State& state,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::filesystem::path const& dst_folder) -> void;
+/**
+ * @brief multithreaded sequence storage
+ */
+CAMEL_EXPORT auto StoreSequences(
+  State& state,
+  std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+  std::filesystem::path const& dst_folder,
+  std::uint64_t dst_file_cap) -> void;
+
+/**
  * @brief serialize pile batch to the destination folder in a single file
  *
  * @return path to the serialized pile batch

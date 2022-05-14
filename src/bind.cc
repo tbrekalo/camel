@@ -3,6 +3,7 @@
 #include "camel/mapping.h"
 #include "camel/state.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"
 #include "nanobind/stl/shared_ptr.h"
 #include "nanobind/stl/string.h"
 #include "nanobind/stl/tuple.h"
@@ -53,20 +54,28 @@ NB_MODULE(camelpy_ext, m) {
     biosoup::NucleicAcid::num_objects = val;
   });
 
-  m.def("load_sequences",
-        [](camel::State& state, std::vector<std::string> const& paths_strs)
-            -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
-          auto paths = std::vector<std::filesystem::path>();
+  m.def(
+      "load_sequences",
+      [](camel::State& state, std::vector<std::string> const& paths_strs)
+          -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
+        auto paths = std::vector<std::filesystem::path>();
 
-          paths.reserve(paths.size());
-          std::transform(paths_strs.cbegin(), paths_strs.cend(),
-                         std::back_inserter(paths),
-                         [](std::string const& str) -> std::filesystem::path {
-                           return str;
-                         });
+        for (auto const& it : paths_strs) {
+          auto it_path = std::filesystem::path(std::move(it));
+          if (std::filesystem::is_regular_file(it_path)) {
+            paths.emplace_back(std::move(it_path));
+          } else if (std::filesystem::is_directory(it_path)) {
+            for (auto dir_entry : std::filesystem::recursive_directory_iterator(
+                     std::move(it_path))) {
+              if (std::filesystem::is_regular_file(dir_entry)) {
+                paths.emplace_back(std::move(dir_entry));
+              }
+            }
+          }
+        }
 
-          return camel::LoadSequences(state, paths);
-        });
+        return camel::LoadSequences(state, paths);
+      });
 
   nb::class_<camel::MapCfg>(m, "MapCfg")
       .def(nb::init<std::uint8_t, std::uint8_t, double>(),
@@ -105,5 +114,42 @@ NB_MODULE(camelpy_ext, m) {
         [](camel::State& state,
            std::string const& path) -> std::vector<camel::Pile> {
           return camel::DeserializePiles(state, std::filesystem::path(path));
+        });
+
+  // utility
+  m.def("sample_ins_distr",
+        [](std::vector<camel::Pile> const& piles)
+            -> std::vector<std::pair<std::uint16_t, std::uint64_t>> {
+          auto cnt_buff = std::vector<std::uint64_t>();
+
+          auto mx_ins = 0U;
+          for (auto const& pile : piles) {
+            for (auto const& covg : pile.covgs) {
+              if (covg.ins > mx_ins) {
+                mx_ins = covg.ins;
+              }
+            }
+          }
+
+          auto dst_sz = 0U;
+          cnt_buff.resize(mx_ins + 1U);
+          for (auto const& pile : piles) {
+            for (auto const& covg : pile.covgs) {
+              if (covg.ins > 0) {
+                dst_sz += (++cnt_buff[covg.ins] == 1UL);
+              }
+            }
+          }
+
+          auto dst =
+              std::vector<std::pair<std::uint16_t, std::uint64_t>>(dst_sz);
+          for (auto i = 0U, j = 0U; i < cnt_buff.size(); ++i) {
+            if (cnt_buff[i] > 0) {
+              dst[j] = std::pair(static_cast<std::uint16_t>(i), cnt_buff[i]);
+              ++j;
+            }
+          }
+
+          return dst;
         });
 }

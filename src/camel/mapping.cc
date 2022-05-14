@@ -112,6 +112,60 @@ static auto SweepOverlaps(std::vector<biosoup::Overlap>& overlaps,
   return {estimated_covg, dst_cnt};
 }
 
+auto FormatAdjacencyList(
+    State& state,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    std::vector<std::vector<biosoup::Overlap>> overlaps)
+    -> std::vector<std::vector<biosoup::Overlap>> {
+  auto ovlp_futures = std::vector<std::future<void>>();
+  ovlp_futures.reserve(reads.size());
+
+  auto const transform_target =
+      [&overlaps](std::uint32_t const target_id) -> void {
+    auto const target_cnt =
+        std::count_if(overlaps[target_id].cbegin(), overlaps[target_id].cend(),
+                      [target_id](biosoup::Overlap const& ovlp) -> bool {
+                        return ovlp.rhs_id < target_id;
+                      });
+
+    auto dst = std::vector<biosoup::Overlap>();
+    dst.reserve(target_cnt);
+
+    for (auto const& ovlp : overlaps[target_id]) {
+      if (ovlp.rhs_id < target_id) {
+        dst.push_back(camel::detail::ReverseOverlap(ovlp));
+      }
+    }
+
+    auto const by_query_id_cmp = [](biosoup::Overlap const& a,
+                                    biosoup::Overlap const& b) -> bool {
+      return a.lhs_id < b.lhs_id;
+    };
+
+    std::sort(dst.begin(), dst.end(), by_query_id_cmp);
+    std::swap(overlaps[target_id], dst);
+  };
+
+  auto const transform_range = [&transform_target](
+                                   std::uint32_t const first_id,
+                                   std::uint32_t const last_id) -> void {
+    for (auto target_id = first_id; target_id != last_id; ++target_id) {
+      transform_target(target_id);
+    }
+  };
+
+  for (auto target_id = 0U; target_id < reads.size(); target_id += 1000U) {
+    ovlp_futures.emplace_back(state.thread_pool->Submit(
+        transform_range, target_id,
+        std::min(target_id + 1000U, static_cast<std::uint32_t>(reads.size()))));
+  }
+
+  std::for_each(ovlp_futures.begin(), ovlp_futures.end(),
+                std::mem_fn(&std::future<void>::get));
+
+  return overlaps;
+}
+
 }  // namespace detail
 
 MapCfg::MapCfg(std::uint8_t kmer_len, std::uint8_t win_len, double filter_p)
@@ -398,6 +452,12 @@ auto FindConfidentOverlaps(
 
     minimize_first = minimize_last;
   }
+
+  timer.Start();
+  overlaps = detail::FormatAdjacencyList(state, src_reads, std::move(overlaps));
+  fmt::print(
+      stderr,
+      "[camel::FindConfidentOverlaps]({:12.3f}) formated adjacency list\n");
 
   return overlaps;
 }
