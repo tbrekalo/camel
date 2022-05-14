@@ -19,6 +19,7 @@ namespace camel {
 namespace detail {
 
 static constexpr std::size_t kDefaultPileStorageFileSz = 1UL << 32UL;  // 4GiB
+static constexpr std::size_t kDefaultSeqStorageFileSz = 1UL << 22UL;   // 4MiB
 
 static constexpr auto kFastaSuffxies =
     std::array<char const*, 4>{".fasta", "fasta.gz", ".fa", ".fa.gz"};
@@ -79,6 +80,94 @@ auto LoadSequences(std::filesystem::path const& path)
   std::move(local_reads.begin(), local_reads.end(), std::back_inserter(dst));
 
   return dst;
+}
+
+auto StoreSequences(
+    State& state,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::filesystem::path const& dst_folder) -> void {
+  StoreSequences(state, seqs, dst_folder, detail::kDefaultSeqStorageFileSz);
+}
+
+auto StoreSequences(
+    State& state,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
+    -> void {
+  auto const find_batch_last =
+      [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator first,
+         std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator last,
+         std::uint64_t const batch_cap)
+      -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
+    for (auto batch_sz = 0UL; 
+              batch_sz < batch_cap && first != last; ++first) {
+      batch_sz += 2UL * ((*first)->inflated_len);
+    }
+
+    return first;
+  };
+
+  auto const is_fasta = seqs.front()->block_quality.empty();
+
+  auto const store_fasta_impl =
+      +[](std::ostream& ostrm,
+          std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
+    ostrm << '>' << seq->name << '\n' << seq->InflateData() << '\n';
+  };
+
+  auto const store_fastq_impl =
+      +[](std::ostream& ostrm,
+          std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
+    ostrm << '@' << seq->name << '\n'
+          << seq->InflateData() << '\n'
+          << "+\n"
+          << seq->InflateQuality() << '\n';
+  };
+
+  using StoreFnSig =
+      void(std::ostream&, std::unique_ptr<biosoup::NucleicAcid> const&);
+  using StoreFnPtr = std::add_const_t<std::add_pointer_t<StoreFnSig>>;
+
+  static_assert(std::is_same_v<decltype(store_fasta_impl), StoreFnPtr>);
+  static_assert(std::is_same_v<decltype(store_fastq_impl), StoreFnPtr>);
+
+  auto const store_fn_impl = is_fasta ? store_fasta_impl : store_fastq_impl;
+
+  auto const store_fn =
+      [impl = store_fn_impl](
+          std::fstream& ofstrm,
+          std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
+    impl(ofstrm, seq);
+  };
+
+  auto ser_futures = std::vector<std::future<void>>();
+
+  {
+    auto batch_id = 0U;
+    for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
+      auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
+      ser_futures.emplace_back(state.thread_pool->Submit(
+          [&dst_folder, is_fasta](
+              std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+                  first,
+              std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+                  last,
+              std::uint32_t batch_id) -> void {
+            auto const dst_file_path =
+                dst_folder / (fmt::format("corrected_batch_{:04d}", batch_id) +
+                              (is_fasta ? ".fa" : ".fq"));
+
+            auto ofstrm =
+                std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
+          },
+          first, last, batch_id));
+
+      first = last;
+    }
+  }
+
+  std::for_each(ser_futures.begin(), ser_futures.end(),
+                std::mem_fn(&std::future<void>::get));
 }
 
 auto LoadSequences(State& state,
@@ -207,8 +296,7 @@ auto DeserializePiles(State& state, std::filesystem::path const& src_dir)
 
   auto pile_futures = std::vector<std::future<std::vector<Pile>>>();
   for (auto const& it : std::filesystem::directory_iterator(src_dir)) {
-    pile_futures.emplace_back(
-      state.thread_pool->Submit(
+    pile_futures.emplace_back(state.thread_pool->Submit(
         [](std::filesystem::directory_entry const& dir_entry)
             -> std::vector<Pile> {
           auto dst = std::vector<Pile>();
