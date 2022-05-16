@@ -1,6 +1,8 @@
 #include "camel/correct.h"
 
+#include <chrono>
 #include <cmath>
+#include <deque>
 #include <fstream>
 #include <functional>
 #include <numeric>
@@ -17,7 +19,7 @@ namespace camel {
 
 namespace detail {
 
-static auto FindOverlapsAndFilterReads(
+[[nodiscard]] static auto FindOverlapsAndFilterReads(
     State& state, std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<ReadOverlapsPair> {
   auto reads_overlaps = std::vector<ReadOverlapsPair>();
@@ -109,10 +111,9 @@ struct CmpOvlpLhsReadId {
   }
 };
 
-static auto CollectOverlaps(State& state,
-                            std::vector<ReadOverlapsPair> const& ros,
-                            std::uint32_t const read_id)
-    -> std::vector<biosoup::Overlap> {
+[[nodiscard]] static auto CollectOverlaps(
+    State& state, std::vector<ReadOverlapsPair> const& ros,
+    std::uint32_t const read_id) -> std::vector<biosoup::Overlap> {
   static constexpr auto kIntervalLen = 5000U;
 
   auto dst = std::vector<biosoup::Overlap>();
@@ -186,8 +187,19 @@ static auto CollectOverlaps(State& state,
                 std::advance(first_out, ovlps.size());
 
               } else {
-                auto const [lo, hi] = std::equal_range(
-                    ovlps.cbegin(), ovlps.cend(), read_id, CmpOvlpLhsReadId());
+                auto const lo =
+                    std::lower_bound(ovlps.cbegin(), ovlps.cend(), read_id,
+                                     [](biosoup::Overlap const& ovlp,
+                                        std::uint32_t const read_id) -> bool {
+                                       return ovlp.lhs_id < read_id;
+                                     });
+
+                auto const hi = std::find_if_not(
+                    lo, ovlps.cend(),
+                    [read_id](biosoup::Overlap const& ovlp) -> bool {
+                      return ovlp.lhs_id == read_id;
+                    });
+
                 first_out = std::copy(lo, hi, first_out);
               }
             }
@@ -239,31 +251,89 @@ static auto CollectOverlaps(State& state,
 auto CalculateAlignments(State& state,
                          std::vector<ReadOverlapsPair> const& reads_overlaps,
                          std::vector<biosoup::Overlap> const& overlaps)
-    -> std::vector<EdlibAlignResult> {
-  auto dst = std::vector<EdlibAlignResult>();
-  dst.reserve(overlaps.size());
+    -> std::vector<std::pair<std::string, EdlibAlignResult>> {
+  auto dst =
+      std::vector<std::pair<std::string, EdlibAlignResult>>(overlaps.size());
 
   auto const calc_alignment =
-      [&reads_overlaps](biosoup::Overlap const& ovlp) -> EdlibAlignResult {
-    auto const [query_str, target_str] = OverlapStrings(reads_overlaps, ovlp);
+      [](std::string const& query_str,
+         std::string const& target_str) -> EdlibAlignResult {
     return edlibAlign(
         query_str.c_str(), query_str.size(), target_str.c_str(),
         target_str.size(),
         edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
   };
 
-  auto align_futures = std::vector<std::future<EdlibAlignResult>>();
+  auto dst_futures =
+      std::vector<std::future<std::pair<std::string, EdlibAlignResult>>>();
+  dst_futures.reserve(overlaps.size());
 
-  align_futures.reserve(overlaps.size());
   for (auto const& ovlp : overlaps) {
-    align_futures.emplace_back(state.thread_pool->Submit(calc_alignment, ovlp));
+    dst_futures.emplace_back(state.thread_pool->Submit(
+        [&reads_overlaps, &calc_alignment](biosoup::Overlap const& ovlp)
+            -> std::pair<std::string, EdlibAlignResult> {
+          auto ovlp_strs = OverlapStrings(reads_overlaps, ovlp);
+          auto alignment = calc_alignment(ovlp_strs.first, ovlp_strs.second);
+
+          return std::pair(std::move(ovlp_strs.second), std::move(alignment));
+        },
+        ovlp));
   }
 
-  std::transform(align_futures.begin(), align_futures.end(),
-                 std::back_inserter(dst),
-                 [](std::future<EdlibAlignResult>& f) -> EdlibAlignResult {
-                   return f.get();
-                 });
+  std::transform(
+      dst_futures.begin(), dst_futures.end(), std::back_inserter(dst),
+      [](std::future<std::pair<std::string, EdlibAlignResult>>& f)
+          -> std::pair<std::string, EdlibAlignResult> { return f.get(); });
+
+  return dst;
+}
+
+static auto CoverageFromAlignments(
+    std::unique_ptr<biosoup::NucleicAcid> const& read,
+    std::vector<biosoup::Overlap> overlaps,
+    std::vector<std::pair<std::string, EdlibAlignResult>> alignments)
+    -> std::vector<Coverage> {
+  auto dst = std::vector<Coverage>(read->inflated_len);
+  for (auto j = 0U; j < overlaps.size(); ++j) {
+    auto const& [target_substr, edlib_res_align] = alignments[j];
+
+    auto query_pos = overlaps[j].lhs_begin;
+    auto target_pos = 0U;
+
+    for (auto k = 0U; k < edlib_res_align.alignmentLength; ++k) {
+      switch (edlib_res_align.alignment[k]) {
+        case 0:
+        case 3: {  // mismatch
+          /* clang-format off */
+            switch(target_substr[target_pos]) {
+              case 'A': ++dst[query_pos].a; break;
+              case 'C': ++dst[query_pos].c; break;
+              case 'G': ++dst[query_pos].g; break;
+              case 'T': ++dst[query_pos].t; break;
+              default: break;
+            }
+          /* clang-format on */
+        }
+        case 1: {
+          ++dst[query_pos].del;
+          ++query_pos;
+          break;
+        }
+        case 2: {
+          ++dst[query_pos].ins;
+          ++target_pos;
+          break;
+        }
+
+        default: {
+          break;
+        }
+      }
+    }
+  }
+  for (auto const& it : alignments) {
+    edlibFreeAlignResult(it.second);
+  }
 
   return dst;
 }
@@ -283,17 +353,59 @@ auto SnpErrorCorrect(
   fmt::print(stderr, "[camel]({:12.3f}) tied overlaps to reads\n",
              timer.Stop());
 
-  timer.Start();
-  auto const front_ovlps = detail::CollectOverlaps(
-      state, reads_overlaps, reads_overlaps.back().read->id);
-  fmt::print(stderr, "[camel]({:12.3f}) collected {} front overlaps\n",
-             timer.Stop(), front_ovlps.size());
+  auto covg_futures = std::deque<std::future<std::vector<Coverage>>>();
+
+  auto const try_pop = [&covg_futures]() -> bool {
+    if (!covg_futures.empty() &&
+        covg_futures.front().wait_for(std::chrono::seconds(0U)) ==
+            std::future_status::ready) {
+      covg_futures.pop_front();
+      return true;
+    }
+    return false;
+  };
 
   timer.Start();
-  auto const front_alignments =
-      detail::CalculateAlignments(state, reads_overlaps, front_ovlps);
-  fmt::print(stderr, "[camel]({:12.3f}) calculated front alignments\n", 
-  timer.Stop());
+  auto cnt = 0U;
+  for (auto i = 0U; i < reads_overlaps.size(); ++i) {
+    auto const& read = reads_overlaps[i].read;
+    auto overlaps = detail::CollectOverlaps(state, reads_overlaps, read->id);
+
+    auto alignments =
+        detail::CalculateAlignments(state, reads_overlaps, overlaps);
+
+    covg_futures.emplace_back(state.thread_pool->Submit(
+        [overlaps = std::move(overlaps), alignments = std::move(alignments)](
+            std::unique_ptr<biosoup::NucleicAcid> const& read) mutable
+        -> std::vector<Coverage> {
+          return detail::CoverageFromAlignments(read, std::move(overlaps),
+                                                std::move(alignments));
+        },
+        std::cref(read)));
+
+    while (try_pop()) {
+      if (++cnt % 1000 == 0U) {
+        fmt::print(stderr,
+                   "\r[camel]({:12.3f}) calculated and updated coverages {} / {}",
+                   timer.Lap(), cnt, reads_overlaps.size());
+      }
+    }
+  }
+
+  while (!covg_futures.empty()) {
+    covg_futures.front().wait();
+    covg_futures.pop_front();
+    if (++cnt % 1000 == 0U || cnt == reads_overlaps.size()) {
+      fmt::print(stderr,
+                 "\r[camel]({:12.3f}) calculated and updated coverages", 
+                 timer.Lap());
+    }
+  }
+
+  fmt::print(stderr, "\n");
+
+  fmt::print(stderr, "[camel]({:12.3f}) calculated and updated coverages\n",
+             timer.Stop());
 
   return dst;
 }

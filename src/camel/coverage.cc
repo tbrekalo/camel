@@ -86,7 +86,7 @@ struct InsSignal {
 
 }  // namespace detail
 
-CAMEL_EXPORT auto CalculateCoverage(
+auto CalculateCoverage(
     State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::filesystem::path const& pile_storage_dir) -> void {
   // consider making reads_overlaps just &; not const&
