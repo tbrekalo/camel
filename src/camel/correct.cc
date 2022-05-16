@@ -1,5 +1,6 @@
 #include "camel/correct.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -18,6 +19,19 @@
 namespace camel {
 
 namespace detail {
+
+static auto constexpr kPackSize = 100U;
+static auto constexpr kMinWinLen = 80U;
+
+struct FastCovg {
+  // mat, del, ins, mis
+  std::array<std::uint_fast16_t, 4> signal;
+};
+
+struct Interval {
+  std::uint32_t start_idx;
+  std::uint32_t end_idx;
+};
 
 [[nodiscard]] static auto FindOverlapsAndFilterReads(
     State& state, std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
@@ -248,92 +262,102 @@ struct CmpOvlpLhsReadId {
   return std::pair(std::move(query_str), std::move(target_str));
 }
 
-auto CalculateAlignments(State& state,
-                         std::vector<ReadOverlapsPair> const& reads_overlaps,
-                         std::vector<biosoup::Overlap> const& overlaps)
-    -> std::vector<std::pair<std::string, EdlibAlignResult>> {
-  auto dst =
-      std::vector<std::pair<std::string, EdlibAlignResult>>(overlaps.size());
-
-  auto const calc_alignment =
-      [](std::string const& query_str,
-         std::string const& target_str) -> EdlibAlignResult {
-    return edlibAlign(
-        query_str.c_str(), query_str.size(), target_str.c_str(),
-        target_str.size(),
-        edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
-  };
-
-  auto dst_futures =
-      std::vector<std::future<std::pair<std::string, EdlibAlignResult>>>();
-  dst_futures.reserve(overlaps.size());
-
-  for (auto const& ovlp : overlaps) {
-    dst_futures.emplace_back(state.thread_pool->Submit(
-        [&reads_overlaps, &calc_alignment](biosoup::Overlap const& ovlp)
-            -> std::pair<std::string, EdlibAlignResult> {
-          auto ovlp_strs = OverlapStrings(reads_overlaps, ovlp);
-          auto alignment = calc_alignment(ovlp_strs.first, ovlp_strs.second);
-
-          return std::pair(std::move(ovlp_strs.second), std::move(alignment));
-        },
-        ovlp));
-  }
-
-  std::transform(
-      dst_futures.begin(), dst_futures.end(), std::back_inserter(dst),
-      [](std::future<std::pair<std::string, EdlibAlignResult>>& f)
-          -> std::pair<std::string, EdlibAlignResult> { return f.get(); });
-
-  return dst;
+[[nodiscard]] static auto AlignStrings(std::string const& query_str,
+                                       std::string const& target_str)
+    -> EdlibAlignResult {
+  return edlibAlign(
+      query_str.c_str(), query_str.size(), target_str.c_str(),
+      target_str.size(),
+      edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
 }
 
-static auto CoverageFromAlignments(
-    std::unique_ptr<biosoup::NucleicAcid> const& read,
-    std::vector<biosoup::Overlap> overlaps,
-    std::vector<std::pair<std::string, EdlibAlignResult>> alignments)
-    -> std::vector<Coverage> {
-  auto dst = std::vector<Coverage>(read->inflated_len);
-  for (auto j = 0U; j < overlaps.size(); ++j) {
-    auto const& [target_substr, edlib_res_align] = alignments[j];
+[[nodiscard]] static auto FindWindows(
+    State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
+    std::unique_ptr<biosoup::NucleicAcid> const& query_read,
+    double const match_ratio) -> std::vector<Interval> {
+  if (query_read->inflated_len < 2 * kMinWinLen) {
+    return {};
+  }
 
-    auto query_pos = overlaps[j].lhs_begin;
-    auto target_pos = 0U;
+  auto dst = std::vector<Interval>();
+  auto coverage = std::vector<FastCovg>(query_read->inflated_len);
 
-    for (auto k = 0U; k < edlib_res_align.alignmentLength; ++k) {
-      switch (edlib_res_align.alignment[k]) {
-        case 0:
-        case 3: {  // mismatch
-          /* clang-format off */
-            switch(target_substr[target_pos]) {
-              case 'A': ++dst[query_pos].a; break;
-              case 'C': ++dst[query_pos].c; break;
-              case 'G': ++dst[query_pos].g; break;
-              case 'T': ++dst[query_pos].t; break;
-              default: break;
-            }
-          /* clang-format on */
-        }
-        case 1: {
-          ++dst[query_pos].del;
-          ++query_pos;
-          break;
-        }
-        case 2: {
-          ++dst[query_pos].ins;
-          ++target_pos;
-          break;
-        }
+  auto const update_coverage = [&reads_overlaps, &coverage, &query_read](
+                                   biosoup::Overlap const& ovlp) -> void {
+    auto const [query_substr, target_substr] =
+        OverlapStrings(reads_overlaps, ovlp);
+    auto const edlib_res = AlignStrings(query_substr, target_substr);
 
-        default: {
-          break;
-        }
+    auto query_pos = ovlp.lhs_begin;
+    for (auto i = 0U; i < edlib_res.alignmentLength; ++i) {
+      ++coverage[query_pos].signal[edlib_res.alignment[i]];
+      query_pos += (edlib_res.alignment[i] != 2);
+    }
+
+    edlibFreeAlignResult(edlib_res);
+  };
+
+  for (auto const& [target_read, target_overlaps] : reads_overlaps) {
+    if (target_read->id == query_read->id) {
+      for (auto const& ovlp : target_overlaps) {
+        update_coverage(detail::ReverseOverlap(ovlp));
+      }
+    } else {
+      auto ovlp_iter = std::lower_bound(
+          target_overlaps.cbegin(), target_overlaps.cend(), target_read->id,
+          [](biosoup::Overlap const& ovlp, std::uint32_t const read_id)
+              -> bool { return ovlp.lhs_id < read_id; });
+
+      for (; ovlp_iter != target_overlaps.cend() &&
+             ovlp_iter->lhs_id == target_read->id;
+           ++ovlp_iter) {
+        update_coverage(*ovlp_iter);
       }
     }
   }
-  for (auto const& it : alignments) {
-    edlibFreeAlignResult(it.second);
+
+  {
+    auto spikes = std::vector<std::uint32_t>();
+    spikes.reserve(query_read->inflated_len / 5U);
+
+    for (auto pos = 0U; pos < coverage.size(); ++pos) {
+      auto const& covg = coverage[pos];
+      auto const sum = std::accumulate(covg.signal.cbegin(), covg.signal.cend(),
+                                       std::uint_fast16_t(0));
+      if (covg.signal[0] < static_cast<std::uint32_t>(0.8 * sum)) {
+        spikes.push_back(pos);
+      }
+    }
+
+    dst.reserve(query_read->inflated_len / kMinWinLen);
+
+    auto first_confident = 0u;
+    for (auto i = 1U, j = 0U; i < spikes.size(); ++i) {
+      auto const spike_pos_diff = spikes[i] - spikes[j];
+      if (spike_pos_diff >= 10U) {
+        auto const pivot = spikes[j] + spike_pos_diff / 2U;
+        if (pivot - first_confident >= kMinWinLen) {
+          dst.push_back(Interval{
+              .start_idx = first_confident,
+              .end_idx = pivot,
+          });
+
+          first_confident = pivot;
+        }
+
+        ++j;
+      }
+    }
+
+    if (query_read->inflated_len - first_confident >= kMinWinLen) {
+      dst.push_back(Interval{.start_idx = first_confident,
+                             .end_idx = query_read->inflated_len});
+    } else {
+      dst.back().end_idx = query_read->inflated_len;
+    }
   }
+
+  decltype(dst)(dst.begin(), dst.end()).swap(dst);
 
   return dst;
 }
@@ -350,62 +374,63 @@ auto SnpErrorCorrect(
   timer.Start();
   auto reads_overlaps =
       detail::FindOverlapsAndFilterReads(state, std::move(src_reads));
-  fmt::print(stderr, "[camel]({:12.3f}) tied overlaps to reads\n",
+  fmt::print(stderr,
+             "[camel::SnpErrorCorrect]({:12.3f}) tied reads with overlaps\n",
              timer.Stop());
 
-  auto covg_futures = std::deque<std::future<std::vector<Coverage>>>();
+  auto window_futures =
+      std::deque<std::future<std::vector<std::vector<detail::Interval>>>>();
 
-  auto const try_pop = [&covg_futures]() -> bool {
-    if (!covg_futures.empty() &&
-        covg_futures.front().wait_for(std::chrono::seconds(0U)) ==
-            std::future_status::ready) {
-      covg_futures.pop_front();
-      return true;
-    }
-    return false;
+  auto const can_pop_future =
+      [](std::future<std::vector<std::vector<detail::Interval>>>& f) -> bool {
+    return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
   };
 
-  timer.Start();
-  auto cnt = 0U;
-  for (auto i = 0U; i < reads_overlaps.size(); ++i) {
-    auto const& read = reads_overlaps[i].read;
-    auto overlaps = detail::CollectOverlaps(state, reads_overlaps, read->id);
+  {
+    auto cnt = 0U;
+    timer.Start();
+    for (auto first = reads_overlaps.cbegin();
+         first != reads_overlaps.cend();) {
+      auto const last =
+          std::min(std::next(first, detail::kPackSize), reads_overlaps.cend());
 
-    auto alignments =
-        detail::CalculateAlignments(state, reads_overlaps, overlaps);
+      window_futures.emplace_back(state.thread_pool->Submit(
+          [&state, &reads_overlaps](
+              std::vector<ReadOverlapsPair>::const_iterator first,
+              std::vector<ReadOverlapsPair>::const_iterator last) {
+            auto dst = std::vector<std::vector<detail::Interval>>();
+            dst.reserve(std::distance(first, last));
 
-    covg_futures.emplace_back(state.thread_pool->Submit(
-        [overlaps = std::move(overlaps), alignments = std::move(alignments)](
-            std::unique_ptr<biosoup::NucleicAcid> const& read) mutable
-        -> std::vector<Coverage> {
-          return detail::CoverageFromAlignments(read, std::move(overlaps),
-                                                std::move(alignments));
-        },
-        std::cref(read)));
+            std::transform(first, last, std::back_inserter(dst),
+                           [&state, &reads_overlaps](ReadOverlapsPair const& ro)
+                               -> std::vector<detail::Interval> {
+                             return detail::FindWindows(state, reads_overlaps,
+                                                        ro.read, 0.8);
+                           });
 
-    while (try_pop()) {
-      if (++cnt % 1000 == 0U) {
-        fmt::print(stderr,
-                   "\r[camel]({:12.3f}) calculated and updated coverages {} / {}",
+            return dst;
+          },
+          first, last));
+
+      first = last;
+    }
+
+    while (!window_futures.empty()) {
+      auto const windows = window_futures.front().get();
+      window_futures.pop_front();
+
+      cnt += windows.size();
+      if (cnt % 1000 == 0U || cnt == reads_overlaps.size()) {
+        fmt::print(stderr, "\r[camel::SnpErrorCorrect]({:12.3f}) {} / {}",
                    timer.Lap(), cnt, reads_overlaps.size());
       }
     }
+    fmt::print(stderr, "\n");
+    timer.Stop();
   }
 
-  while (!covg_futures.empty()) {
-    covg_futures.front().wait();
-    covg_futures.pop_front();
-    if (++cnt % 1000 == 0U || cnt == reads_overlaps.size()) {
-      fmt::print(stderr,
-                 "\r[camel]({:12.3f}) calculated and updated coverages", 
-                 timer.Lap());
-    }
-  }
-
-  fmt::print(stderr, "\n");
-
-  fmt::print(stderr, "[camel]({:12.3f}) calculated and updated coverages\n",
-             timer.Stop());
+  fmt::print(stderr, "[camel::SnpErrorCorrect]({:12.3f})\n",
+             timer.elapsed_time());
 
   return dst;
 }

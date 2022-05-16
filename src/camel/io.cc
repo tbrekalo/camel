@@ -63,21 +63,19 @@ static auto CmpNucleicAcidByName(
 
 auto LoadSequences(std::filesystem::path const& path)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
-  auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-
   auto parser = detail::CreateParser(path);
-  auto local_reads = parser->Parse(std::numeric_limits<std::uint64_t>::max());
+  auto dst = parser->Parse(std::numeric_limits<std::uint64_t>::max());
 
-  std::sort(local_reads.begin(), local_reads.end(),
-            detail::CmpNucleicAcidByName);
+  std::sort(dst.begin(), dst.end(), detail::CmpNucleicAcidByName);
 
   // reindexing
-  for (auto idx = 0U; idx < local_reads.size(); ++idx) {
-    local_reads[idx]->id = idx;
+  for (auto idx = 0U; idx < dst.size(); ++idx) {
+    dst[idx]->id = idx;
   }
 
-  dst.reserve(local_reads.size());
-  std::move(local_reads.begin(), local_reads.end(), std::back_inserter(dst));
+  decltype(dst)(std::make_move_iterator(dst.begin()),
+                std::make_move_iterator(dst.end()))
+      .swap(dst);
 
   return dst;
 }
@@ -95,12 +93,13 @@ auto StoreSequences(
     std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
     -> void {
   auto const find_batch_last =
-      [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator first,
-         std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator last,
+      [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+             first,
+         std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+             last,
          std::uint64_t const batch_cap)
       -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
-    for (auto batch_sz = 0UL; 
-              batch_sz < batch_cap && first != last; ++first) {
+    for (auto batch_sz = 0UL; batch_sz < batch_cap && first != last; ++first) {
       batch_sz += 2UL * ((*first)->inflated_len);
     }
 
