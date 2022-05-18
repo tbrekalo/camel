@@ -35,6 +35,10 @@ struct Interval {
   std::uint32_t end_idx;
 };
 
+struct PloidyInterval : Interval {
+  std::vector<std::uint32_t> snp_sites;
+};
+
 [[nodiscard]] static auto FindOverlapsAndFilterReads(
     State& state, std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<ReadOverlapsPair> {
@@ -78,8 +82,7 @@ struct Interval {
         reads_overlaps.begin(), reads_overlaps.end(),
         [&ovlp_cnsts](camel::ReadOverlapsPair const& ro) -> bool {
           return ovlp_cnsts[ro.read->id] > 0UL;
-        }
-        );
+        });
 
     auto const n_mapped = std::distance(reads_overlaps.begin(), unmapped_first);
     auto const n_unmapped = reads_overlaps.size() - n_mapped;
@@ -277,12 +280,12 @@ struct CmpOvlpLhsReadId {
 [[nodiscard]] static auto FindWindows(
     State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::unique_ptr<biosoup::NucleicAcid> const& query_read,
-    double const match_ratio) -> std::vector<Interval> {
+    double const match_ratio) -> std::vector<PloidyInterval> {
   if (query_read->inflated_len < 2 * kSpikeMergeLen) {
     return {};
   }
 
-  auto dst = std::vector<Interval>();
+  auto dst = std::vector<PloidyInterval>();
   auto coverage = std::vector<FastCovg>(query_read->inflated_len);
 
   auto const update_coverage = [&reads_overlaps, &coverage, &query_read](
@@ -323,6 +326,9 @@ struct CmpOvlpLhsReadId {
     auto spikes = std::vector<std::uint32_t>();
     spikes.reserve(query_read->inflated_len / 5U);
 
+    auto snp_candidates = std::vector<std::uint32_t>();
+    snp_candidates.reserve(query_read->inflated_len / 10U);
+
     for (auto pos = 0U; pos < coverage.size(); ++pos) {
       auto const& covg = coverage[pos];
       auto const sum = std::accumulate(covg.signal.cbegin(), covg.signal.cend(),
@@ -330,6 +336,14 @@ struct CmpOvlpLhsReadId {
       if (covg.signal[0] <
           static_cast<std::uint32_t>(std::round(match_ratio * sum))) {
         spikes.push_back(pos);
+      }
+
+      if (std::abs(static_cast<std::int32_t>(covg.signal[0]) -
+                   static_cast<std::int32_t>(covg.signal[3])) <
+              static_cast<std::uint32_t>(std::round(sum * 0.333)) &&
+          covg.signal[0] + covg.signal[3] >
+              static_cast<std::uint32_t>(std::round(sum * 0.8))) {
+        snp_candidates.push_back(pos);
       }
     }
 
@@ -383,11 +397,10 @@ struct CmpOvlpLhsReadId {
 
       dst.resize(groups.size());
 
-      // convert groups to windows
+      // convert groups to intervals
       dst[0].start_idx = spikes[groups[0].first] >= kWinPadding
                              ? (spikes[groups[0].first] - kWinPadding)
                              : 0U;
-
 
       for (auto i = 0U; i + 1U < groups.size(); ++i) {
         auto const rhs_gap =
@@ -406,11 +419,37 @@ struct CmpOvlpLhsReadId {
                             query_read->inflated_len)
                                ? (spikes[groups.back().second] + kWinPadding)
                                : query_read->inflated_len;
+    }
 
+    decltype(dst)(dst.begin(), dst.end()).swap(dst);
+
+    {
+      auto i = 0U;
+      for (auto& interval : dst) {
+        for (;
+             i < snp_candidates.size() && snp_candidates[i] < interval.end_idx;
+             ++i) {
+          if (snp_candidates[i] >= interval.start_idx) {
+            interval.snp_sites.push_back(snp_candidates[i]);
+          }
+        }
+
+        decltype(interval.snp_sites)(interval.snp_sites)
+            .swap(interval.snp_sites);
+      }
     }
   }
 
-  decltype(dst)(dst.begin(), dst.end()).swap(dst);
+  return dst;
+}
+
+[[nodiscard]] static auto CorrectReads(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>>::iterator seq_first,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>>::iterator seq_last,
+    std::vector<PloidyInterval>::iterator interval_firsts,
+    std::vector<PloidyInterval>::iterator interval_last)
+    -> std::vector<AnnotatedRead> {
+  auto dst = std::vector<AnnotatedRead>();
 
   return dst;
 }
@@ -431,11 +470,12 @@ auto SnpErrorCorrect(
              "[camel::SnpErrorCorrect]({:12.3f}) tied reads with overlaps\n",
              timer.Stop());
 
-  auto window_futures =
-      std::deque<std::future<std::vector<std::vector<detail::Interval>>>>();
+  auto window_futures = std::deque<
+      std::future<std::vector<std::vector<detail::PloidyInterval>>>>();
 
   auto const can_pop_future =
-      [](std::future<std::vector<std::vector<detail::Interval>>>& f) -> bool {
+      [](std::future<std::vector<std::vector<detail::PloidyInterval>>>& f)
+      -> bool {
     return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
   };
 
@@ -451,12 +491,12 @@ auto SnpErrorCorrect(
           [&state, &reads_overlaps](
               std::vector<ReadOverlapsPair>::const_iterator first,
               std::vector<ReadOverlapsPair>::const_iterator last) {
-            auto dst = std::vector<std::vector<detail::Interval>>();
+            auto dst = std::vector<std::vector<detail::PloidyInterval>>();
             dst.reserve(std::distance(first, last));
 
             std::transform(first, last, std::back_inserter(dst),
                            [&state, &reads_overlaps](ReadOverlapsPair const& ro)
-                               -> std::vector<detail::Interval> {
+                               -> std::vector<detail::PloidyInterval> {
                              return detail::FindWindows(state, reads_overlaps,
                                                         ro.read, 0.9);
                            });
