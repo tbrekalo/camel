@@ -106,11 +106,16 @@ FetchContent_Declare(
   GIT_TAG 2.1.1)
 
 FetchContent_Declare(
+  spoa
+  GIT_REPOSITORY https://github.com/rvaser/spoa
+  GIT_TAG 4.0.7)
+
+FetchContent_Declare(
   thread_pool
   GIT_REPOSITORY https://github.com/rvaser/thread_pool.git
   GIT_TAG 4.0.0)
 
-FetchContent_MakeAvailable(bioparser biosoup edlib ram thread_pool)
+FetchContent_MakeAvailable(bioparser biosoup edlib ram spoa thread_pool)
 
 # create main target
 set(camel_SOURCES
@@ -136,7 +141,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    bioparser edlib fmt::fmt ram tsl::robin_map zstd::zstd)
+    bioparser edlib fmt::fmt ram spoa tsl::robin_map zstd::zstd)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
