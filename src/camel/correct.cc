@@ -21,7 +21,9 @@ namespace camel {
 namespace detail {
 
 static auto constexpr kPackSize = 100U;
-static auto constexpr kMinWinLen = 80U;
+
+static auto constexpr kWinPadding = 19U;
+static auto constexpr kSpikeMergeLen = 420;
 
 struct FastCovg {
   // mat, del, ins, mis
@@ -76,7 +78,8 @@ struct Interval {
         reads_overlaps.begin(), reads_overlaps.end(),
         [&ovlp_cnsts](camel::ReadOverlapsPair const& ro) -> bool {
           return ovlp_cnsts[ro.read->id] > 0UL;
-        });
+        }
+        );
 
     auto const n_mapped = std::distance(reads_overlaps.begin(), unmapped_first);
     auto const n_unmapped = reads_overlaps.size() - n_mapped;
@@ -275,7 +278,7 @@ struct CmpOvlpLhsReadId {
     State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::unique_ptr<biosoup::NucleicAcid> const& query_read,
     double const match_ratio) -> std::vector<Interval> {
-  if (query_read->inflated_len < 2 * kMinWinLen) {
+  if (query_read->inflated_len < 2 * kSpikeMergeLen) {
     return {};
   }
 
@@ -324,36 +327,86 @@ struct CmpOvlpLhsReadId {
       auto const& covg = coverage[pos];
       auto const sum = std::accumulate(covg.signal.cbegin(), covg.signal.cend(),
                                        std::uint_fast16_t(0));
-      if (covg.signal[0] < static_cast<std::uint32_t>(0.8 * sum)) {
+      if (covg.signal[0] <
+          static_cast<std::uint32_t>(std::round(match_ratio * sum))) {
         spikes.push_back(pos);
       }
     }
 
-    dst.reserve(query_read->inflated_len / kMinWinLen);
+    if (!spikes.empty()) {
+      // create initial groups
 
-    auto first_confident = 0u;
-    for (auto i = 1U, j = 0U; i < spikes.size(); ++i) {
-      auto const spike_pos_diff = spikes[i] - spikes[j];
-      if (spike_pos_diff >= 10U) {
-        auto const pivot = spikes[j] + spike_pos_diff / 2U;
-        if (pivot - first_confident >= kMinWinLen) {
-          dst.push_back(Interval{
-              .start_idx = first_confident,
-              .end_idx = pivot,
+      auto groups = std::vector<std::pair<std::uint32_t, std::uint32_t>>();
+      groups.resize(spikes.size());
+
+      std::generate_n(
+          groups.begin(), groups.size(),
+          [i = 0U]() mutable -> std::pair<std::uint32_t, std::uint32_t> {
+            return std::pair(i, i++);
           });
 
-          first_confident = pivot;
+      while (true) {
+        auto term = true;
+        for (auto i = 1U; i + 1U < groups.size(); ++i) {
+          auto const lhs_dist =
+              spikes[groups[i].second] - spikes[groups[i - 1U].first];
+          auto const rhs_dist =
+              spikes[groups[i + 1U].second] - spikes[groups[i].first];
+
+          if (lhs_dist < rhs_dist && lhs_dist < kSpikeMergeLen) {
+            groups[i].first = groups[i - 1U].first;
+            groups[i - 1U] = {1U, 0U};
+
+            term = false;
+          }
+
+          if (lhs_dist >= rhs_dist && rhs_dist < kSpikeMergeLen) {
+            groups[i].second = groups[i + 1U].second;
+            groups[i + 1U] = {1U, 0U};
+
+            term = false;
+            std::swap(groups[i], groups[i + 1U]);
+            ++i;
+          }
         }
 
-        ++j;
-      }
-    }
+        groups.erase(
+            std::remove_if(groups.begin(), groups.end(),
+                           [](std::pair<std::uint32_t, std::uint32_t> const pii)
+                               -> bool { return pii.first > pii.second; }),
+            groups.end());
 
-    if (query_read->inflated_len - first_confident >= kMinWinLen) {
-      dst.push_back(Interval{.start_idx = first_confident,
-                             .end_idx = query_read->inflated_len});
-    } else {
-      dst.back().end_idx = query_read->inflated_len;
+        if (term) {
+          break;
+        }
+      }
+
+      dst.resize(groups.size());
+
+      // convert groups to windows
+      dst[0].start_idx = spikes[groups[0].first] >= kWinPadding
+                             ? (spikes[groups[0].first] - kWinPadding)
+                             : 0U;
+
+
+      for (auto i = 0U; i + 1U < groups.size(); ++i) {
+        auto const rhs_gap =
+            spikes[groups[i + 1U].first] - spikes[groups[i].second];
+
+        if (rhs_gap >= 2 * kWinPadding + 1U) {
+          dst[i].end_idx = spikes[groups[i].second] + kWinPadding + 1U;
+          dst[i + 1U].start_idx = spikes[groups[i + 1U].first] - kWinPadding;
+        } else {
+          dst[i].end_idx = spikes[groups[i].second] + (rhs_gap / 2U);
+          dst[i + 1U].start_idx = spikes[groups[i + 1U].first] - (rhs_gap / 2U);
+        }
+      }
+
+      dst.back().end_idx = (spikes[groups.back().second] + kWinPadding <=
+                            query_read->inflated_len)
+                               ? (spikes[groups.back().second] + kWinPadding)
+                               : query_read->inflated_len;
+
     }
   }
 
@@ -405,7 +458,7 @@ auto SnpErrorCorrect(
                            [&state, &reads_overlaps](ReadOverlapsPair const& ro)
                                -> std::vector<detail::Interval> {
                              return detail::FindWindows(state, reads_overlaps,
-                                                        ro.read, 0.8);
+                                                        ro.read, 0.9);
                            });
 
             return dst;
