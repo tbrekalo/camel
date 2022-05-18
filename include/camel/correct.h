@@ -12,13 +12,25 @@
 
 namespace camel {
 
+struct POAConfig {
+  std::int8_t match = 3;
+  std::int8_t mismatch = -5;
+  std::int8_t gap = -3;
+};
+
+struct PolishConfig {
+  POAConfig poa_cfg;
+};
+
 CAMEL_EXPORT struct AnnotatedRead {
   std::unique_ptr<biosoup::NucleicAcid> read;
   std::vector<std::uint32_t> snp_calls;
 };
 
 CAMEL_EXPORT [[nodiscard]] auto SnpErrorCorrect(
-    State& state, std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
+    State& state, 
+    PolishConfig const polish_cfg,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<AnnotatedRead>;
 
 }  // namespace camel

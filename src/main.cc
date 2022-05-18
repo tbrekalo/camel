@@ -99,10 +99,21 @@ auto main(int argc, char** argv) -> int {
 
     timer.Start();
     auto corrected_and_annoted =
-        camel::SnpErrorCorrect(state, std::move(reads));
+        camel::SnpErrorCorrect(state, camel::PolishConfig{}, std::move(reads));
     timer.Stop();
 
-    
+    auto dump = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
+
+    dump.reserve(corrected_and_annoted.size());
+    std::transform(std::make_move_iterator(corrected_and_annoted.begin()),
+                   std::make_move_iterator(corrected_and_annoted.end()),
+                   std::back_inserter(dump),
+                   [](camel::AnnotatedRead ar)
+                       -> std::unique_ptr<biosoup::NucleicAcid> {
+                     return std::move(ar.read);
+                   });
+
+    camel::StoreSequences(state, dump, out_path);
   }
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
