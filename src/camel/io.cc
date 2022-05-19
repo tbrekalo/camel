@@ -146,7 +146,7 @@ auto StoreSequences(
     for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
       auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
       ser_futures.emplace_back(state.thread_pool->Submit(
-          [&dst_folder, is_fasta](
+          [&dst_folder, is_fasta, store_fn](
               std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
                   first,
               std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
@@ -158,6 +158,10 @@ auto StoreSequences(
 
             auto ofstrm =
                 std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
+
+            for (; first != last; ++first) {
+              store_fn(ofstrm, *first);
+            }
           },
           first, last, batch_id));
 
