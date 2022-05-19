@@ -113,7 +113,7 @@ auto main(int argc, char** argv) -> int {
                      return std::move(ar.read);
                    });
 
-    camel::StoreSequences(state, dump, out_path);
+    camel::StoreSequences(state, dump, out_path, 1U << 28U);
   }
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
