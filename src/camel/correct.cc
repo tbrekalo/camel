@@ -111,6 +111,12 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
                      });
 
       auto const dst_folder = state.log_path / "unmapped";
+
+      if (std::filesystem::exists(dst_folder)) {
+        std::filesystem::remove_all(dst_folder);
+      }
+
+      std::filesystem::create_directory(dst_folder);
       camel::StoreSequences(state, unmapped, dst_folder);
 
       decltype(reads_overlaps)(std::make_move_iterator(reads_overlaps.begin()),
@@ -606,8 +612,8 @@ struct CmpOvlpLhsReadId {
 
       auto const ovl_last = std::find_if_not(
           ovlp_first, reads_overlaps[idx].overlaps.cend(),
-          [id = query_read->id](biosoup::Overlap const& ovlp) -> bool {
-            return ovlp.lhs_id == id;
+          [lhs_id = query_read->id](biosoup::Overlap const& ovlp) -> bool {
+            return ovlp.lhs_id == lhs_id;
           });
 
       std::for_each(ovlp_first, ovl_last, align_to_intervals);
@@ -624,7 +630,11 @@ struct CmpOvlpLhsReadId {
       auto const& intv = intervals[i];
       consensus += query_read->InflateData(pos, intv.start_idx - pos);
       consensus += graphs[i].GenerateConsensus();
+
+      pos = intv.end_idx;
     }
+
+    consensus += query_read->InflateData(pos);
 
     dst.read =
         std::make_unique<biosoup::NucleicAcid>(query_read->name, consensus);
