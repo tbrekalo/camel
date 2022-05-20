@@ -29,6 +29,7 @@ CAMEL_EXPORT struct AnnotatedRead {
 
 CAMEL_EXPORT [[nodiscard]] auto SnpErrorCorrect(
     State& state, 
+    MapCfg const map_cfg,
     PolishConfig const polish_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<AnnotatedRead>;
