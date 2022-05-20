@@ -15,8 +15,8 @@ namespace camel {
 
 namespace detail {
 
-static constexpr auto kMinimizeBatchCap = 1UL << 32UL;
-static constexpr auto kMapBatchCap = 1UL << 30UL;
+static constexpr auto kMinimizeBatchCap = 1UL << 34UL;
+static constexpr auto kMapBatchCap = 1UL << 26UL;
 
 static constexpr auto kCoverageFactor = 12UL;
 
@@ -275,8 +275,8 @@ auto FindOverlaps(
         stderr, "[camel::FindOverlaps]({:12.3f}) minimized {} / {} reads\n",
         timer.Stop(), std::distance(minimize_first, reads.end()), reads.size());
 
+    timer.Start();
     for (auto map_first = reads.cbegin(); map_first < minimize_last;) {
-      timer.Start();
       auto const map_last =
           find_batch_forward(map_first, minimize_last, detail::kMapBatchCap);
 
@@ -291,13 +291,16 @@ auto FindOverlaps(
       }
 
       fmt::print(stderr,
-                 "[camel::FindOverlaps]({:12.3f}) mapped {} / {} reads\n",
-                 timer.Stop(), std::distance(reads.cbegin(), map_last),
+                 "\r[camel::FindOverlaps]({:12.3f}) mapped {} / {} reads",
+                 timer.Lap(), std::distance(reads.cbegin(), map_last),
                  std::distance(reads.begin(), minimize_last));
 
       map_first = map_last;
       map_futures.clear();
     }
+
+    timer.Stop();
+    fmt::print(stderr, "\n");
 
     defrag_futures.emplace_back(state.thread_pool->Submit(
         [&read_ovlps](
