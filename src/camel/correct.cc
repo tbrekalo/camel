@@ -50,6 +50,12 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
   return intv.end_idx - intv.start_idx;
 }
 
+struct Alignment {
+  std::uint32_t query_start;
+  std::string target_str;
+  EdlibAlignResult edlib_res;
+};
+
 [[nodiscard]] static auto FindOverlapsAndFilterReads(
     State& state, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
@@ -431,10 +437,9 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
     for (auto i = 0U;
          i < edlib_res.alignmentLength && interval_idx < intervals.size();
          ++i) {
-      can_align &=
-          !(snp_idx < intervals[interval_idx].snp_sites.size() &&
-            intervals[interval_idx].snp_sites[snp_idx] == query_pos &&
-            edlib_res.alignment[i] != 0);
+      can_align &= !(snp_idx < intervals[interval_idx].snp_sites.size() &&
+                     intervals[interval_idx].snp_sites[snp_idx] == query_pos &&
+                     edlib_res.alignment[i] != 0);
 
       snp_idx += (snp_idx < intervals[interval_idx].snp_sites.size() &&
                   query_pos == intervals[interval_idx].snp_sites[snp_idx]);
@@ -467,7 +472,7 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
         can_align = true;
       }
     }
-    
+
     edlibFreeAlignResult(edlib_res);
 
     for (auto const& [intv_idx, local_interval, target_interval] : sections) {
@@ -612,9 +617,6 @@ auto SnpErrorCorrect(
 
     std::for_each(worker_futures.begin(), worker_futures.end(),
                   std::mem_fn(&std::future<void>::wait));
-
-    timer.Stop();
-    fmt::print(stderr, "\n");
   }
 
   fmt::print(stderr, "[camel::SnpErrorCorrect]({:12.3f})\n",
