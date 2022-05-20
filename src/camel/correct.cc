@@ -16,6 +16,7 @@
 #include "fmt/core.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/spoa.hpp"
+#include "tsl/robin_map.h"
 
 namespace camel {
 
@@ -28,6 +29,8 @@ static auto constexpr kSpikeMergeLen = 420U;
 
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
+
+static auto constexpr kBatchCap = 1UL << 24UL;
 
 struct FastCovg {
   // mat, del, ins, mis
@@ -48,12 +51,13 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
 }
 
 [[nodiscard]] static auto FindOverlapsAndFilterReads(
-    State& state, std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
+    State& state, MapCfg const map_cfg,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<ReadOverlapsPair> {
   auto reads_overlaps = std::vector<ReadOverlapsPair>();
   reads_overlaps.reserve(src_reads.size());
 
-  auto overlaps = camel::FindOverlaps(state, MapCfg{}, src_reads);
+  auto overlaps = camel::FindOverlaps(state, map_cfg, src_reads);
   auto timer = biosoup::Timer();
 
   timer.Start();
@@ -131,123 +135,6 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
   }
 
   return reads_overlaps;
-}
-
-struct CmpOvlpLhsReadId {
-  auto operator()(biosoup::Overlap const& ovlp,
-                  std::uint32_t const read_id) const noexcept -> bool {
-    return ovlp.lhs_id < read_id;
-  }
-
-  auto operator()(std::uint32_t const read_id,
-                  biosoup::Overlap const& ovlp) const noexcept -> bool {
-    return read_id < ovlp.lhs_id;
-  }
-};
-
-[[nodiscard]] static auto CollectOverlaps(
-    State& state, std::vector<ReadOverlapsPair> const& ros,
-    std::uint32_t const read_id) -> std::vector<biosoup::Overlap> {
-  static constexpr auto kIntervalLen = 5000U;
-
-  auto dst = std::vector<biosoup::Overlap>();
-  auto const kNIntervals = std::ceil((1.0 * ros.size()) / kIntervalLen);
-
-  auto interval_counts = std::vector<std::uint64_t>(kNIntervals);
-
-  {
-    auto count_futures = std::vector<std::future<std::uint64_t>>();
-
-    count_futures.reserve(kNIntervals);
-    for (auto first = ros.cbegin(); first != ros.cend();) {
-      auto const last = std::min(std::next(first, kIntervalLen), ros.cend());
-
-      count_futures.emplace_back(state.thread_pool->Submit(
-          [read_id](std::vector<ReadOverlapsPair>::const_iterator first,
-                    std::vector<ReadOverlapsPair>::const_iterator last)
-              -> std::uint64_t {
-            return std::transform_reduce(
-                first, last, 0UL, std::plus<std::uint64_t>(),
-                [read_id](ReadOverlapsPair const& ro) -> std::uint64_t {
-                  auto const& ovlps = ro.overlaps;
-                  if (!ovlps.empty() && ovlps.front().rhs_id == read_id) {
-                    return ovlps.size();
-                  } else {
-                    auto const [lo, hi] =
-                        std::equal_range(ovlps.cbegin(), ovlps.cend(), read_id,
-                                         CmpOvlpLhsReadId());
-
-                    return std::distance(lo, hi);
-                  }
-                });
-          },
-          first, last));
-
-      first = last;
-    }
-
-    std::transform(
-        count_futures.begin(), count_futures.end(), interval_counts.begin(),
-        [](std::future<std::uint64_t>& f) -> std::uint64_t { return f.get(); });
-
-    auto const n_total_ovlps =
-        std::accumulate(interval_counts.cbegin(), interval_counts.cend(), 0UL);
-
-    dst.resize(n_total_ovlps);
-  }
-
-  {
-    auto collect_futures = std::vector<std::future<void>>();
-    collect_futures.reserve(kNIntervals);
-
-    auto interval_firsts = std::move(interval_counts);
-    std::exclusive_scan(interval_firsts.begin(), interval_firsts.end(),
-                        interval_firsts.begin(), 0UL);
-
-    auto interval_id = 0U;
-    for (auto first = ros.cbegin(); first != ros.cend(); ++interval_id) {
-      auto const last = std::min(std::next(first, kIntervalLen), ros.cend());
-
-      collect_futures.emplace_back(state.thread_pool->Submit(
-          [read_id](std::vector<ReadOverlapsPair>::const_iterator first,
-                    std::vector<ReadOverlapsPair>::const_iterator last,
-                    std::vector<biosoup::Overlap>::iterator first_out) mutable
-          -> void {
-            for (; first != last; ++first) {
-              auto const& ovlps = first->overlaps;
-              if (!ovlps.empty() && ovlps.front().rhs_id == read_id) {
-                std::transform(ovlps.begin(), ovlps.end(), first_out,
-                               detail::ReverseOverlap);
-                std::advance(first_out, ovlps.size());
-
-              } else {
-                auto const lo =
-                    std::lower_bound(ovlps.cbegin(), ovlps.cend(), read_id,
-                                     [](biosoup::Overlap const& ovlp,
-                                        std::uint32_t const read_id) -> bool {
-                                       return ovlp.lhs_id < read_id;
-                                     });
-
-                auto const hi = std::find_if_not(
-                    lo, ovlps.cend(),
-                    [read_id](biosoup::Overlap const& ovlp) -> bool {
-                      return ovlp.lhs_id == read_id;
-                    });
-
-                first_out = std::copy(lo, hi, first_out);
-              }
-            }
-          },
-          first, last, std::next(dst.begin(), interval_firsts[interval_id])));
-
-      first = last;
-    }
-
-    std::for_each(collect_futures.begin(), collect_futures.end(),
-                  std::mem_fn(&std::future<void>::wait));
-  }
-
-  return dst;
 }
 
 // TODO: extract to overlap detail
@@ -459,7 +346,8 @@ struct CmpOvlpLhsReadId {
 }
 
 [[nodiscard]] static auto CorrectRead(
-    State& state, POAConfig const poa_cfg,
+    State& state,
+    std::unique_ptr<spoa::AlignmentEngine> const& alignment_engine,
     std::vector<ReadOverlapsPair> const& reads_overlaps,
     std::uint32_t const seq_idx) -> AnnotatedRead {
   auto dst = AnnotatedRead();
@@ -489,38 +377,29 @@ struct CmpOvlpLhsReadId {
         return graph;
       });
 
-  auto const is_lhs_usable_ovlp =
-      [&intervals](biosoup::Overlap const& ovlp) -> bool {
-    auto interval_iter = std::lower_bound(
-        intervals.cbegin(), intervals.cend(), ovlp.lhs_end,
-        [](PloidyInterval const& pi, std::uint32_t const pos) -> bool {
-          return pi.start_idx < pos;
-        });
+  // auto const is_lhs_usable_ovlp =
+  //     [&intervals](biosoup::Overlap const& ovlp) -> bool {
+  //   auto interval_iter = std::lower_bound(
+  //       intervals.cbegin(), intervals.cend(), ovlp.lhs_end,
+  //       [](PloidyInterval const& pi, std::uint32_t const pos) -> bool {
+  //         return pi.start_idx < pos;
+  //       });
 
-    return interval_iter != intervals.cend() &&
-           ovlp.lhs_begin < interval_iter->end_idx;
-  };
+  //   return interval_iter != intervals.cend() &&
+  //          ovlp.lhs_begin < interval_iter->end_idx;
+  // };
 
-  auto const is_rhs_usable_ovlp =
-      [&intervals](biosoup::Overlap const& ovlp) -> bool {
-    auto interval_iter = std::lower_bound(
-        intervals.cbegin(), intervals.cend(), ovlp.rhs_end,
-        [](PloidyInterval const& pi, std::uint32_t const pos) -> bool {
-          return pi.start_idx < pos;
-        });
+  // auto const is_rhs_usable_ovlp =
+  //     [&intervals](biosoup::Overlap const& ovlp) -> bool {
+  //   auto interval_iter = std::lower_bound(
+  //       intervals.cbegin(), intervals.cend(), ovlp.rhs_end,
+  //       [](PloidyInterval const& pi, std::uint32_t const pos) -> bool {
+  //         return pi.start_idx < pos;
+  //       });
 
-    return interval_iter != intervals.cend() &&
-           ovlp.rhs_begin < interval_iter->end_idx;
-  };
-
-  /* clang-format off */
-  auto alignment_engine =
-    spoa::AlignmentEngine::Create(
-      spoa::AlignmentType::kNW,
-      poa_cfg.match,
-      poa_cfg.mismatch,
-      poa_cfg.gap);
-  /* clang-format on */
+  //   return interval_iter != intervals.cend() &&
+  //          ovlp.rhs_begin < interval_iter->end_idx;
+  // };
 
   auto const align_to_graph = [&intervals, &graphs, &alignment_engine](
                                   std::uint32_t const interval_idx,
@@ -595,28 +474,24 @@ struct CmpOvlpLhsReadId {
   };
 
   for (auto const& ovlp : reads_overlaps[seq_idx].overlaps) {
-    if (is_rhs_usable_ovlp(ovlp)) {
-      auto const rev_ovlp = detail::ReverseOverlap(ovlp);
-      align_to_intervals(rev_ovlp);
-    }
+    auto const rev_ovlp = detail::ReverseOverlap(ovlp);
+    align_to_intervals(rev_ovlp);
   }
 
   for (auto idx = 0U; idx != reads_overlaps.size(); ++idx) {
     if (idx != seq_idx) {
-      auto const ovlp_first = std::lower_bound(
+      auto curr_ovlp_iter = std::lower_bound(
           reads_overlaps[idx].overlaps.cbegin(),
           reads_overlaps[idx].overlaps.cend(), query_read->id,
           [](biosoup::Overlap const& ovlp, std::uint32_t const lhs_id) -> bool {
             return ovlp.lhs_id < lhs_id;
           });
 
-      auto const ovl_last = std::find_if_not(
-          ovlp_first, reads_overlaps[idx].overlaps.cend(),
-          [lhs_id = query_read->id](biosoup::Overlap const& ovlp) -> bool {
-            return ovlp.lhs_id == lhs_id;
-          });
-
-      std::for_each(ovlp_first, ovl_last, align_to_intervals);
+      for (; curr_ovlp_iter != reads_overlaps[idx].overlaps.cend() &&
+             curr_ovlp_iter->lhs_id == query_read->id;
+           ++curr_ovlp_iter) {
+        align_to_intervals(*curr_ovlp_iter);
+      }
     }
   }
 
@@ -646,7 +521,7 @@ struct CmpOvlpLhsReadId {
 }  // namespace detail
 
 auto SnpErrorCorrect(
-    State& state, PolishConfig const polish_cfg,
+    State& state, MapCfg const map_cfg, PolishConfig const polish_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<AnnotatedRead> {
   auto dst = std::vector<AnnotatedRead>();
@@ -655,7 +530,7 @@ auto SnpErrorCorrect(
 
   timer.Start();
   auto reads_overlaps =
-      detail::FindOverlapsAndFilterReads(state, std::move(src_reads));
+      detail::FindOverlapsAndFilterReads(state, map_cfg, std::move(src_reads));
   fmt::print(stderr,
              "[camel::SnpErrorCorrect]({:12.3f}) tied reads with overlaps\n",
              timer.Stop());
@@ -663,25 +538,74 @@ auto SnpErrorCorrect(
   {
     timer.Start();
 
-    auto correct_futures = std::vector<std::future<AnnotatedRead>>();
-    correct_futures.reserve(reads_overlaps.size());
+    auto alignment_engines =
+        tsl::robin_map<std::thread::id,
+                       std::unique_ptr<spoa::AlignmentEngine>>();
 
-    for (auto idx = 0U; idx < reads_overlaps.size(); ++idx) {
-      correct_futures.emplace_back(state.thread_pool->Submit(
-          detail::CorrectRead, std::ref(state), polish_cfg.poa_cfg,
-          std::cref(reads_overlaps), idx));
+    for (auto const& [thread_id, _] : state.thread_pool->thread_map()) {
+      alignment_engines[thread_id] = spoa::AlignmentEngine::Create(
+          spoa::AlignmentType::kNW, polish_cfg.poa_cfg.match,
+          polish_cfg.poa_cfg.mismatch, polish_cfg.poa_cfg.gap);
     }
 
-    dst.reserve(correct_futures.size());
-    for (auto i = 0U; i < correct_futures.size(); ++i) {
-      dst.push_back(correct_futures[i].get());
-      if (i % 1000U == 0U) {
-        fmt::print(
-            stderr,
-            "\r[camel::SnpErrorCorrect]({:12.3f}) corrected {} / {} reads",
-            timer.Lap(), i, correct_futures.size());
+    auto worker_futures = std::vector<std::future<void>>();
+    auto atomic_idx = std::atomic<std::uint32_t>{0U};
+
+    auto mtx = std::mutex();
+    auto report_cv = std::condition_variable();
+
+    auto report_val = 0U;
+
+    fmt::print(stderr, "[camel::SnpErrorCorrect] is indexing lock free: {}\n",
+               decltype(atomic_idx)::is_always_lock_free);
+
+    timer.Start();
+    dst.resize(reads_overlaps.size());
+    worker_futures.reserve(state.thread_pool->num_threads());
+    std::generate_n(
+        std::back_inserter(worker_futures), state.thread_pool->num_threads(),
+        [&]() -> std::future<void> {
+          return state.thread_pool->Submit([&]() -> void {
+            auto const& align_engine =
+                alignment_engines[std::this_thread::get_id()];
+
+            auto curr_idx = 0U;
+            while (true) {
+              curr_idx = atomic_idx.fetch_add(1);
+              if (curr_idx >= reads_overlaps.size()) {
+                break;
+              }
+
+              dst[curr_idx] = detail::CorrectRead(state, align_engine,
+                                                  reads_overlaps, curr_idx);
+
+              if (curr_idx > 0 && ((curr_idx + 1U) % 1000 == 0U ||
+                                   curr_idx + 1U == reads_overlaps.size())) {
+                auto lk = std::unique_lock(mtx);
+                report_val = curr_idx + 1U;
+                report_cv.notify_one();
+              }
+            }
+          });
+        });
+
+    while (true) {
+      auto lk = std::unique_lock(mtx);
+      report_cv.wait(lk);
+
+      fmt::print(stderr,
+                 "\r[camel::SnpErrorCorrect]({:12.3f}) corrected {} / {} reads",
+                 timer.Lap(), report_val, reads_overlaps.size());
+
+      if (report_val == reads_overlaps.size()) {
+        fmt::print(stderr, "\n");
+        timer.Stop();
+        break;
       }
     }
+
+    std::for_each(worker_futures.begin(), worker_futures.end(),
+                  std::mem_fn(&std::future<void>::wait));
 
     timer.Stop();
     fmt::print(stderr, "\n");
