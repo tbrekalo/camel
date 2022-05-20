@@ -38,6 +38,12 @@ auto main(int argc, char** argv) -> int {
             cxxopts::value<std::string>()->default_value("./camel_log"))
     ("o,out", "output destination folder",
       cxxopts::value<std::string>()->default_value("./camel_out"))
+    ("k,kmer", "kmer length, odd number between 3 and 31",
+      cxxopts::value<std::uint8_t>()->default_value("15"))
+    ("w,win_len", "window length",
+      cxxopts::value<std::uint8_t>()->default_value("9"))
+    ("f,filter", "filter percentage of most common minimizers",
+      cxxopts::value<double>()->default_value("0.01"))
     ("paths", "input fastq reads", 
             cxxopts::value<std::vector<std::string>>());
   options.parse_positional("paths");
@@ -85,6 +91,10 @@ auto main(int argc, char** argv) -> int {
     }
   }
 
+  auto map_cfg = camel::MapCfg(result["kmer"].as<std::uint8_t>(),
+                               result["win_len"].as<std::uint8_t>(),
+                               result["filter"].as<double>());
+
   decltype(paths)(std::make_move_iterator(paths.begin()),
                   std::make_move_iterator(paths.end()))
       .swap(paths);
@@ -99,7 +109,7 @@ auto main(int argc, char** argv) -> int {
 
     timer.Start();
     auto corrected_and_annoted =
-        camel::SnpErrorCorrect(state, camel::PolishConfig{}, std::move(reads));
+        camel::SnpErrorCorrect(state, map_cfg, camel::PolishConfig{}, std::move(reads));
     timer.Stop();
 
     auto dump = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
