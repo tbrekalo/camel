@@ -467,6 +467,8 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
         can_align = true;
       }
     }
+    
+    edlibFreeAlignResult(edlib_res);
 
     for (auto const& [intv_idx, local_interval, target_interval] : sections) {
       auto const target_substr = target_str.substr(
