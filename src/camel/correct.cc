@@ -377,30 +377,6 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
         return graph;
       });
 
-  // auto const is_lhs_usable_ovlp =
-  //     [&intervals](biosoup::Overlap const& ovlp) -> bool {
-  //   auto interval_iter = std::lower_bound(
-  //       intervals.cbegin(), intervals.cend(), ovlp.lhs_end,
-  //       [](PloidyInterval const& pi, std::uint32_t const pos) -> bool {
-  //         return pi.start_idx < pos;
-  //       });
-
-  //   return interval_iter != intervals.cend() &&
-  //          ovlp.lhs_begin < interval_iter->end_idx;
-  // };
-
-  // auto const is_rhs_usable_ovlp =
-  //     [&intervals](biosoup::Overlap const& ovlp) -> bool {
-  //   auto interval_iter = std::lower_bound(
-  //       intervals.cbegin(), intervals.cend(), ovlp.rhs_end,
-  //       [](PloidyInterval const& pi, std::uint32_t const pos) -> bool {
-  //         return pi.start_idx < pos;
-  //       });
-
-  //   return interval_iter != intervals.cend() &&
-  //          ovlp.rhs_begin < interval_iter->end_idx;
-  // };
-
   auto const align_to_graph = [&intervals, &graphs, &alignment_engine](
                                   std::uint32_t const interval_idx,
                                   Interval local_interval,
@@ -446,22 +422,40 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
         std::upper_bound(intervals.cbegin(), intervals.cend(), query_pos,
                          [](std::uint32_t const pos, PloidyInterval const& pi)
                              -> bool { return pos < pi.end_idx; }));
+    auto snp_idx = 0U;
 
+    auto sections =
+        std::vector<std::tuple<std::uint32_t, Interval, Interval>>();
+
+    auto can_align = true;
     for (auto i = 0U;
          i < edlib_res.alignmentLength && interval_idx < intervals.size();
          ++i) {
+      can_align &=
+          !(snp_idx < intervals[interval_idx].snp_sites.size() &&
+            intervals[interval_idx].snp_sites[snp_idx] == query_pos &&
+            edlib_res.alignment[i] != 0);
+
+      snp_idx += (snp_idx < intervals[interval_idx].snp_sites.size() &&
+                  query_pos == intervals[interval_idx].snp_sites[snp_idx]);
+
       query_pos += (edlib_res.alignment[i] != 2);
       target_pos += (edlib_res.alignment[i] != 1);
 
       if (intervals[interval_idx].end_idx == query_pos) {
-        auto const local_interval = Interval{
-            .start_idx = query_anchor - intervals[interval_idx].start_idx,
-            .end_idx = query_pos - intervals[interval_idx].start_idx};
+        if (can_align) {
+          auto const local_interval = Interval{
+              .start_idx = query_anchor - intervals[interval_idx].start_idx,
+              .end_idx = query_pos - intervals[interval_idx].start_idx};
 
-        auto const target_substr =
-            target_str.substr(target_anchor, target_pos - target_anchor);
+          auto const target_substr =
+              target_str.substr(target_anchor, target_pos - target_anchor);
 
-        align_to_graph(interval_idx, local_interval, target_substr);
+          sections.emplace_back(
+              interval_idx, local_interval,
+              Interval{.start_idx = target_anchor, .end_idx = target_pos});
+        }
+
         ++interval_idx;
       }
 
@@ -469,7 +463,17 @@ static auto IntervalLen(Interval const& intv) -> std::uint32_t {
           intervals[interval_idx].start_idx == query_pos) {
         query_anchor = query_pos;
         target_anchor = target_pos;
+
+        can_align = true;
       }
+    }
+
+    for (auto const& [intv_idx, local_interval, target_interval] : sections) {
+      auto const target_substr = target_str.substr(
+          target_interval.start_idx,
+          target_interval.end_idx - target_interval.start_idx);
+
+      align_to_graph(intv_idx, local_interval, target_substr);
     }
   };
 
