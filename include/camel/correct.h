@@ -22,17 +22,10 @@ struct PolishConfig {
   POAConfig poa_cfg;
 };
 
-CAMEL_EXPORT struct AnnotatedRead {
-  std::unique_ptr<biosoup::NucleicAcid> read;
-  std::vector<std::uint32_t> snp_calls;
-};
-
 CAMEL_EXPORT [[nodiscard]] auto SnpErrorCorrect(
-    State& state, 
-    MapCfg const map_cfg,
-    PolishConfig const polish_cfg,
+    State& state, MapCfg const map_cfg, PolishConfig const polish_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
-    -> std::vector<AnnotatedRead>;
+    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
 }  // namespace camel
 

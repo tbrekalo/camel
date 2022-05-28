@@ -22,15 +22,17 @@ namespace camel {
 
 namespace detail {
 
-static auto constexpr kPackSize = 100U;
-
 static auto constexpr kWinPadding = 19U;
 static auto constexpr kSpikeMergeLen = 420U;
 
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
 
-static auto constexpr kBatchCap = 1UL << 24UL;
+static auto constexpr kBatchCap = 1UL << 28UL;
+
+static auto constexpr kQuerySectionCap = 1U << 4U;
+
+static auto constexpr kReportMaks = (1U << 10U) - 1U;
 
 struct FastCovg {
   // mat, del, ins, mis
@@ -42,11 +44,27 @@ struct Interval {
   std::uint32_t end_idx;
 };
 
+struct Section {
+  Interval query_interval;
+  Interval target_interval;
+  std::uint32_t target_id;
+};
+
 struct PloidyInterval : Interval {
   std::vector<std::uint32_t> snp_sites;
 };
 
-static auto IntervalLen(Interval const& intv) -> std::uint32_t {
+struct CorrectionInterval : PloidyInterval {
+  std::array<Section, kQuerySectionCap + 1U> sections;
+  std::uint32_t n_active;
+};
+
+struct OverlapEdlibAlignment {
+  biosoup::Overlap const ovlp;
+  EdlibAlignResult edlib_result;
+};
+
+static inline auto IntervalLen(Interval const& intv) -> std::uint32_t {
   return intv.end_idx - intv.start_idx;
 }
 
@@ -184,51 +202,65 @@ struct Alignment {
       edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
 }
 
-[[nodiscard]] static auto FindIntervals(
+[[nodiscard]] static auto FindAlignments(
     State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
-    std::uint32_t query_read_idx, double const match_ratio)
-    -> std::vector<PloidyInterval> {
-  auto const& query_read = reads_overlaps[query_read_idx].read;
+    std::uint32_t const query_read_idx) -> std::vector<OverlapEdlibAlignment> {
+  auto dst = std::vector<OverlapEdlibAlignment>();
+  auto const query_id = reads_overlaps[query_read_idx].read->id;
+
+  auto const create_alignment =
+      [&reads_overlaps](biosoup::Overlap const& ovlp) -> OverlapEdlibAlignment {
+    auto const [query_str, target_str] = OverlapStrings(reads_overlaps, ovlp);
+
+    return {.ovlp = ovlp, .edlib_result = AlignStrings(query_str, target_str)};
+  };
+
+  dst.reserve(reads_overlaps[query_read_idx].overlaps.size());
+  for (auto const& ovlp : reads_overlaps[query_read_idx].overlaps) {
+    auto const rev_ovlp = ReverseOverlap(ovlp);
+    dst.push_back(create_alignment(rev_ovlp));
+  }
+
+  for (auto read_idx = 0U; read_idx < reads_overlaps.size(); ++read_idx) {
+    if (read_idx != query_read_idx) {
+      auto const& ovlps = reads_overlaps[read_idx].overlaps;
+      auto first = std::lower_bound(
+          ovlps.cbegin(), ovlps.cend(), query_id,
+
+          [](biosoup::Overlap const& ovlp, std::uint32_t const lhs_id) -> bool {
+            return ovlp.lhs_id < lhs_id;
+          });
+
+      for (; first != ovlps.cend() && first->lhs_id == query_id; ++first) {
+        dst.push_back(create_alignment(*first));
+      }
+    }
+  }
+
+  return dst;
+}
+
+[[nodiscard]] static auto FindIntervals(
+    std::unique_ptr<biosoup::NucleicAcid> const& query_read,
+    std::vector<OverlapEdlibAlignment> const& overlap_alignments,
+    double const match_ratio) -> std::vector<CorrectionInterval> {
   if (query_read->inflated_len < 2 * kSpikeMergeLen) {
     return {};
   }
 
-  auto dst = std::vector<PloidyInterval>();
+  auto dst = std::vector<CorrectionInterval>();
   auto coverage = std::vector<FastCovg>(query_read->inflated_len);
 
-  auto const update_coverage = [&reads_overlaps, &coverage, &query_read](
-                                   biosoup::Overlap const& ovlp) -> void {
-    auto const [query_substr, target_substr] =
-        OverlapStrings(reads_overlaps, ovlp);
-    auto const edlib_res = AlignStrings(query_substr, target_substr);
-
-    auto query_pos = ovlp.lhs_begin;
+  auto const update_coverage =
+      [&overlap_alignments, &coverage,
+       &query_read](OverlapEdlibAlignment const& ovlp_alignment) -> void {
+    auto query_pos = ovlp_alignment.ovlp.lhs_begin;
+    auto const& edlib_res = ovlp_alignment.edlib_result;
     for (auto i = 0U; i < edlib_res.alignmentLength; ++i) {
       ++coverage[query_pos].signal[edlib_res.alignment[i]];
       query_pos += (edlib_res.alignment[i] != 2);
     }
-
-    edlibFreeAlignResult(edlib_res);
   };
-
-  for (auto const& [target_read, target_overlaps] : reads_overlaps) {
-    if (target_read->id == query_read->id) {
-      for (auto const& ovlp : target_overlaps) {
-        update_coverage(detail::ReverseOverlap(ovlp));
-      }
-    } else {
-      auto ovlp_iter = std::lower_bound(
-          target_overlaps.cbegin(), target_overlaps.cend(), target_read->id,
-          [](biosoup::Overlap const& ovlp, std::uint32_t const read_id)
-              -> bool { return ovlp.lhs_id < read_id; });
-
-      for (; ovlp_iter != target_overlaps.cend() &&
-             ovlp_iter->lhs_id == target_read->id;
-           ++ovlp_iter) {
-        update_coverage(*ovlp_iter);
-      }
-    }
-  }
 
   {
     auto spikes = std::vector<std::uint32_t>();
@@ -355,175 +387,160 @@ struct Alignment {
     State& state,
     std::unique_ptr<spoa::AlignmentEngine> const& alignment_engine,
     std::vector<ReadOverlapsPair> const& reads_overlaps,
-    std::uint32_t const seq_idx) -> AnnotatedRead {
-  auto dst = AnnotatedRead();
-  auto const intervals = FindIntervals(state, reads_overlaps, seq_idx, 0.9);
+    std::uint32_t const query_idx) -> std::unique_ptr<biosoup::NucleicAcid> {
+  auto dst = std::unique_ptr<biosoup::NucleicAcid>();
+  auto const ovlps_aligned = FindAlignments(state, reads_overlaps, query_idx);
+
+  auto const& query_read = reads_overlaps[query_idx].read;
+  auto intervals = FindIntervals(query_read, ovlps_aligned, 0.9);
 
   if (intervals.empty()) {
     // maybe think of a better way to do this
-    dst.read = std::make_unique<biosoup::NucleicAcid>(
-        reads_overlaps[seq_idx].read->name,
-        reads_overlaps[seq_idx].read->InflateData());
-  }
+    dst = std::make_unique<biosoup::NucleicAcid>(
+        reads_overlaps[query_idx].read->name,
+        reads_overlaps[query_idx].read->InflateData());
+  } else {
+    auto const backbone = reads_overlaps[query_idx].read->InflateData();
+    auto graphs = std::vector<spoa::Graph>();
 
-  auto const& query_read = reads_overlaps[seq_idx].read;
+    graphs.reserve(intervals.size());
+    std::transform(
+        intervals.cbegin(), intervals.cend(), std::back_inserter(graphs),
+        [&backbone](PloidyInterval const& pi) -> spoa::Graph {
+          auto graph = spoa::Graph();
+          graph.AddAlignment(
+              spoa::Alignment(),
+              backbone.substr(pi.start_idx, pi.end_idx - pi.start_idx), 0U);
 
-  auto const backbone = reads_overlaps[seq_idx].read->InflateData();
-  auto graphs = std::vector<spoa::Graph>();
+          return graph;
+        });
 
-  graphs.reserve(intervals.size());
-  std::transform(
-      intervals.cbegin(), intervals.cend(), std::back_inserter(graphs),
-      [&backbone](PloidyInterval const& pi) -> spoa::Graph {
-        auto graph = spoa::Graph();
-        graph.AddAlignment(
-            spoa::Alignment(),
-            backbone.substr(pi.start_idx, pi.end_idx - pi.start_idx), 0U);
-
-        return graph;
-      });
-
-  auto const align_to_graph = [&intervals, &graphs, &alignment_engine](
-                                  std::uint32_t const interval_idx,
-                                  Interval local_interval,
-                                  std::string const& target_substr) -> void {
-    auto const kIntervalLen = IntervalLen(intervals[interval_idx]);
-    if (kIntervalLen > kWinPadding &&
-        IntervalLen(local_interval) < kIntervalLen * kSmallWindowPercent) {
-      return;
-    }
-
-    auto const kLegalStart = kIntervalLen * kAllowedFuzzPercent;
-    auto const kLegalEnd = kIntervalLen - kLegalStart;
-
-    auto alignment = spoa::Alignment();
-    if (local_interval.start_idx <= kLegalStart && kLegalEnd <= kLegalEnd) {
-      alignment = alignment_engine->Align(target_substr, graphs[interval_idx]);
-    } else {
-      auto mapping = std::vector<spoa::Graph::Node const*>();
-      auto subgraph = graphs[interval_idx].Subgraph(
-          local_interval.start_idx, local_interval.end_idx - 1, &mapping);
-      alignment = alignment_engine->Align(target_substr, subgraph);
-      subgraph.UpdateAlignment(mapping, &alignment);
-    }
-
-    graphs[interval_idx].AddAlignment(alignment, target_substr);
-  };
-
-  auto const align_to_intervals =
-      [&reads_overlaps, &intervals, &graphs,
-       &align_to_graph](biosoup::Overlap const& ovlp) -> void {
-    auto const [query_str, target_str] = OverlapStrings(reads_overlaps, ovlp);
-
-    auto const edlib_res = AlignStrings(query_str, target_str);
-
-    auto query_pos = ovlp.lhs_begin;
-    auto target_pos = 0U;
-
-    auto query_anchor = query_pos;
-    auto target_anchor = target_pos;
-
-    auto interval_idx = std::distance(
-        intervals.cbegin(),
-        std::upper_bound(intervals.cbegin(), intervals.cend(), query_pos,
-                         [](std::uint32_t const pos, PloidyInterval const& pi)
-                             -> bool { return pos < pi.end_idx; }));
-    auto snp_idx = 0U;
-
-    auto sections =
-        std::vector<std::tuple<std::uint32_t, Interval, Interval>>();
-
-    auto can_align = true;
-    for (auto i = 0U;
-         i < edlib_res.alignmentLength && interval_idx < intervals.size();
-         ++i) {
-      can_align &= !(snp_idx < intervals[interval_idx].snp_sites.size() &&
-                     intervals[interval_idx].snp_sites[snp_idx] == query_pos &&
-                     edlib_res.alignment[i] != 0);
-
-      snp_idx += (snp_idx < intervals[interval_idx].snp_sites.size() &&
-                  query_pos == intervals[interval_idx].snp_sites[snp_idx]);
-
-      query_pos += (edlib_res.alignment[i] != 2);
-      target_pos += (edlib_res.alignment[i] != 1);
-
-      if (intervals[interval_idx].end_idx == query_pos) {
-        if (can_align) {
-          auto const local_interval = Interval{
-              .start_idx = query_anchor - intervals[interval_idx].start_idx,
-              .end_idx = query_pos - intervals[interval_idx].start_idx};
-
-          auto const target_substr =
-              target_str.substr(target_anchor, target_pos - target_anchor);
-
-          sections.emplace_back(
-              interval_idx, local_interval,
-              Interval{.start_idx = target_anchor, .end_idx = target_pos});
-        }
-
-        ++interval_idx;
+    auto const align_to_graph = [&intervals, &graphs, &alignment_engine](
+                                    std::uint32_t const interval_idx,
+                                    Interval local_interval,
+                                    std::string const& target_substr) -> void {
+      auto const kIntervalLen = IntervalLen(intervals[interval_idx]);
+      if (kIntervalLen > kWinPadding &&
+          IntervalLen(local_interval) < kIntervalLen * kSmallWindowPercent) {
+        return;
       }
 
-      if (interval_idx != intervals.size() &&
-          intervals[interval_idx].start_idx == query_pos) {
-        query_anchor = query_pos;
-        target_anchor = target_pos;
+      auto const kLegalStart = kIntervalLen * kAllowedFuzzPercent;
+      auto const kLegalEnd = kIntervalLen - kLegalStart;
 
-        can_align = true;
+      auto alignment = spoa::Alignment();
+      if (local_interval.start_idx <= kLegalStart && kLegalEnd <= kLegalEnd) {
+        alignment =
+            alignment_engine->Align(target_substr, graphs[interval_idx]);
+      } else {
+        auto mapping = std::vector<spoa::Graph::Node const*>();
+        auto subgraph = graphs[interval_idx].Subgraph(
+            local_interval.start_idx, local_interval.end_idx - 1, &mapping);
+        alignment = alignment_engine->Align(target_substr, subgraph);
+        subgraph.UpdateAlignment(mapping, &alignment);
       }
-    }
 
-    edlibFreeAlignResult(edlib_res);
+      graphs[interval_idx].AddAlignment(alignment, target_substr);
+    };
 
-    for (auto const& [intv_idx, local_interval, target_interval] : sections) {
-      auto const target_substr = target_str.substr(
-          target_interval.start_idx,
-          target_interval.end_idx - target_interval.start_idx);
-
-      align_to_graph(intv_idx, local_interval, target_substr);
-    }
-  };
-
-  for (auto const& ovlp : reads_overlaps[seq_idx].overlaps) {
-    auto const rev_ovlp = detail::ReverseOverlap(ovlp);
-    align_to_intervals(rev_ovlp);
-  }
-
-  for (auto idx = 0U; idx != reads_overlaps.size(); ++idx) {
-    if (idx != seq_idx) {
-      auto curr_ovlp_iter = std::lower_bound(
-          reads_overlaps[idx].overlaps.cbegin(),
-          reads_overlaps[idx].overlaps.cend(), query_read->id,
-          [](biosoup::Overlap const& ovlp, std::uint32_t const lhs_id) -> bool {
-            return ovlp.lhs_id < lhs_id;
+    auto unfilled = intervals.size();
+    for (auto const& [ovlp, edlib_res] : ovlps_aligned) {
+      auto intv_iter = std::upper_bound(
+          intervals.begin(), intervals.end(), ovlp.lhs_begin,
+          [](std::uint32_t const pos, Interval const& intv) -> bool {
+            return pos < intv.end_idx;
           });
 
-      for (; curr_ovlp_iter != reads_overlaps[idx].overlaps.cend() &&
-             curr_ovlp_iter->lhs_id == query_read->id;
-           ++curr_ovlp_iter) {
-        align_to_intervals(*curr_ovlp_iter);
+      auto valid = true;
+      auto snp_idx = 0U;
+
+      auto query_pos = ovlp.lhs_begin;
+      auto target_pos = ovlp.rhs_begin;
+
+      auto query_interval = Interval{query_pos, query_pos};
+      auto target_interval = Interval{target_pos, target_pos};
+
+      for (auto i = 0U;
+           i < edlib_res.alignmentLength && intv_iter != intervals.end(); ++i) {
+        query_pos += (edlib_res.alignment[i] != 2U);
+        target_pos += (edlib_res.alignment[i] != 1U);
+
+        valid &= (snp_idx >= intv_iter->snp_sites.size() ||
+                  !(intv_iter->snp_sites[snp_idx] == query_pos &&
+                    edlib_res.alignment[i] != 0U));
+
+        snp_idx += (snp_idx < intv_iter->snp_sites.size() &&
+                    intv_iter->snp_sites[snp_idx] == query_pos);
+
+        if (query_pos == intv_iter->end_idx) {
+          if (valid) {
+            intv_iter->sections[intv_iter->n_active] = {
+                .query_interval = query_interval,
+                .target_interval = target_interval,
+                .target_id = ovlp.rhs_id};
+
+            unfilled -= (intv_iter->n_active + 1U == kQuerySectionCap);
+            intv_iter->n_active += (intv_iter->n_active != kQuerySectionCap);
+          }
+
+          ++intv_iter;
+        }
+
+        if (query_pos == intv_iter->start_idx) {
+          valid = true;
+          snp_idx = 0U;
+
+          query_interval = {query_pos, query_pos};
+          target_interval = {target_pos, target_pos};
+        }
       }
+
+      if (unfilled == 0U) {
+        break;
+      }
+    }
+
+    for (auto idx = 0U; idx < intervals.size(); ++idx) {
+      for (auto i = 0U; i < intervals[idx].n_active; ++i) {
+        auto const local_interval = intervals[idx].sections[idx].query_interval;
+        auto const target_interval =
+            intervals[idx].sections[idx].target_interval;
+        auto const target_substr =
+            std::lower_bound(reads_overlaps.begin(), reads_overlaps.end(),
+                             intervals[idx].sections[i].target_id,
+                             [](ReadOverlapsPair const& ro,
+                                std::uint32_t const target_id) -> bool {
+                               return ro.read->id < target_id;
+                             })
+                ->read->InflateData(target_interval.start_idx,
+                                    IntervalLen(target_interval));
+
+        align_to_graph(idx, local_interval, target_substr);
+      }
+    }
+
+    // generate consensus
+    {
+      auto consensus = std::string();
+      consensus.reserve(query_read->inflated_len * 1.1);
+
+      auto pos = 0U;
+      for (auto i = 0U; i < intervals.size(); ++i) {
+        auto const& intv = intervals[i];
+        consensus += query_read->InflateData(pos, intv.start_idx - pos);
+        consensus += graphs[i].GenerateConsensus();
+
+        pos = intv.end_idx;
+      }
+
+      consensus += query_read->InflateData(pos);
+
+      dst = std::make_unique<biosoup::NucleicAcid>(query_read->name, consensus);
     }
   }
 
-  // generate consensus
-  {
-    auto consensus = std::string();
-    consensus.reserve(query_read->inflated_len * 1.1);
-
-    auto pos = 0U;
-    for (auto i = 0U; i < intervals.size(); ++i) {
-      auto const& intv = intervals[i];
-      consensus += query_read->InflateData(pos, intv.start_idx - pos);
-      consensus += graphs[i].GenerateConsensus();
-
-      pos = intv.end_idx;
-    }
-
-    consensus += query_read->InflateData(pos);
-
-    dst.read =
-        std::make_unique<biosoup::NucleicAcid>(query_read->name, consensus);
+  for (auto const& [ovlp, edlib_res] : ovlps_aligned) {
+    edlibFreeAlignResult(edlib_res);
   }
 
   return dst;
@@ -534,8 +551,8 @@ struct Alignment {
 auto SnpErrorCorrect(
     State& state, MapCfg const map_cfg, PolishConfig const polish_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
-    -> std::vector<AnnotatedRead> {
-  auto dst = std::vector<AnnotatedRead>();
+    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
+  auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
 
   auto timer = biosoup::Timer();
 
@@ -559,64 +576,60 @@ auto SnpErrorCorrect(
           polish_cfg.poa_cfg.mismatch, polish_cfg.poa_cfg.gap);
     }
 
-    auto worker_futures = std::vector<std::future<void>>();
-    auto atomic_idx = std::atomic<std::uint32_t>{0U};
+    auto const find_batch_last =
+        [](std::vector<ReadOverlapsPair>::const_iterator first,
+           std::vector<ReadOverlapsPair>::const_iterator last,
+           std::size_t const batch_cap)
+        -> std::vector<ReadOverlapsPair>::const_iterator {
+      for (auto batch_sz = 0UL; batch_sz < batch_cap && first != last;
+           ++first) {
+        batch_sz += first->read->inflated_len;
+      }
 
-    auto mtx = std::mutex();
-    auto report_cv = std::condition_variable();
+      return first;
+    };
 
-    auto report_val = 0U;
+    auto correct_futures =
+        std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
 
-    fmt::print(stderr, "[camel::SnpErrorCorrect] is indexing lock free: {}\n",
-               decltype(atomic_idx)::is_always_lock_free);
-
-    timer.Start();
-    dst.resize(reads_overlaps.size());
-    worker_futures.reserve(state.thread_pool->num_threads());
-    std::generate_n(
-        std::back_inserter(worker_futures), state.thread_pool->num_threads(),
-        [&]() -> std::future<void> {
-          return state.thread_pool->Submit([&]() -> void {
-            auto const& align_engine =
+    auto const correct_async = [&state, &reads_overlaps, &alignment_engines](
+                                   std::uint32_t const query_idx)
+        -> std::future<std::unique_ptr<biosoup::NucleicAcid>> {
+      return state.thread_pool->Submit(
+          [&alignment_engines](
+              State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
+              std::uint32_t const& query_idx)
+              -> std::unique_ptr<biosoup::NucleicAcid> {
+            auto const& alignment_engine =
                 alignment_engines[std::this_thread::get_id()];
+            return detail::CorrectRead(state, alignment_engine, reads_overlaps,
+                                       query_idx);
+          },
+          std::ref(state), std::cref(reads_overlaps), query_idx
 
-            auto curr_idx = 0U;
-            while (true) {
-              curr_idx = atomic_idx.fetch_add(1);
-              if (curr_idx >= reads_overlaps.size()) {
-                break;
-              }
+      );
+    };
 
-              dst[curr_idx] = detail::CorrectRead(state, align_engine,
-                                                  reads_overlaps, curr_idx);
+    dst.reserve(reads_overlaps.size());
+    correct_futures.reserve(reads_overlaps.size());
+    for (auto idx = 0U; idx < reads_overlaps.size(); ++idx) {
+      correct_futures.emplace_back(correct_async(idx));
+    }
 
-              if (curr_idx > 0 && ((curr_idx + 1U) % 1000 == 0U ||
-                                   curr_idx + 1U == reads_overlaps.size())) {
-                auto lk = std::unique_lock(mtx);
-                report_val = curr_idx + 1U;
-                report_cv.notify_one();
-              }
-            }
-          });
-        });
+    for (auto idx = 0U; idx < reads_overlaps.size(); ++idx) {
+      dst.push_back(correct_futures[idx].get());
 
-    while (true) {
-      auto lk = std::unique_lock(mtx);
-      report_cv.wait(lk);
-
-      fmt::print(stderr,
-                 "\r[camel::SnpErrorCorrect]({:12.3f}) corrected {} / {} reads",
-                 timer.Lap(), report_val, reads_overlaps.size());
-
-      if (report_val == reads_overlaps.size()) {
-        fmt::print(stderr, "\n");
-        timer.Stop();
-        break;
+      if (((idx + 1U) & detail::kReportMaks) == 0U ||
+          idx + 1U == reads_overlaps.size()) {
+        fmt::print(
+            stderr,
+            "\r[camel::SnpErrorCorrect]({:12.3f}) corrected {} / {} reads",
+            timer.Lap(), idx + 1U, reads_overlaps.size());
       }
     }
 
-    std::for_each(worker_futures.begin(), worker_futures.end(),
-                  std::mem_fn(&std::future<void>::wait));
+    fmt::print(stderr, "\n");
+    timer.Stop();
   }
 
   fmt::print(stderr, "[camel::SnpErrorCorrect]({:12.3f})\n",
