@@ -108,22 +108,11 @@ auto main(int argc, char** argv) -> int {
                reads.size());
 
     timer.Start();
-    auto corrected_and_annoted =
-        camel::SnpErrorCorrect(state, map_cfg, camel::PolishConfig{}, std::move(reads));
+    auto corrected_reads = camel::SnpErrorCorrect(
+        state, map_cfg, camel::PolishConfig{}, std::move(reads));
     timer.Stop();
 
-    auto dump = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-
-    dump.reserve(corrected_and_annoted.size());
-    std::transform(std::make_move_iterator(corrected_and_annoted.begin()),
-                   std::make_move_iterator(corrected_and_annoted.end()),
-                   std::back_inserter(dump),
-                   [](camel::AnnotatedRead ar)
-                       -> std::unique_ptr<biosoup::NucleicAcid> {
-                     return std::move(ar.read);
-                   });
-
-    camel::StoreSequences(state, dump, out_path, 1U << 28U);
+    camel::StoreSequences(state, corrected_reads, out_path, 1U << 28U);
   }
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
