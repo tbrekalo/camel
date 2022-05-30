@@ -460,7 +460,8 @@ auto FindConfidentOverlaps(
   overlaps = detail::FormatAdjacencyList(state, src_reads, std::move(overlaps));
   fmt::print(
       stderr,
-      "[camel::FindConfidentOverlaps]({:12.3f}) formated adjacency list\n");
+      "[camel::FindConfidentOverlaps]({:12.3f}) formated adjacency list\n",
+      timer.Stop());
 
   return overlaps;
 }

@@ -22,8 +22,8 @@ namespace camel {
 
 namespace detail {
 
-static auto constexpr kWinPadding = 19U;
-static auto constexpr kSpikeMergeLen = 420U;
+static auto constexpr kWinPadding = 13U;
+static auto constexpr kSpikeMergeLen = 240U;
 
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
@@ -81,7 +81,7 @@ struct Alignment {
   auto reads_overlaps = std::vector<ReadOverlapsPair>();
   reads_overlaps.reserve(src_reads.size());
 
-  auto overlaps = camel::FindOverlaps(state, map_cfg, src_reads);
+  auto overlaps = camel::FindConfidentOverlaps(state, map_cfg, src_reads);
   auto timer = biosoup::Timer();
 
   timer.Start();
@@ -244,7 +244,7 @@ struct Alignment {
     std::unique_ptr<biosoup::NucleicAcid> const& query_read,
     std::vector<OverlapEdlibAlignment> const& overlap_alignments,
     double const match_ratio) -> std::vector<CorrectionInterval> {
-  if (query_read->inflated_len < 2 * kSpikeMergeLen) {
+  if (query_read->inflated_len < 1.2 * kSpikeMergeLen) {
     return {};
   }
 
@@ -261,6 +261,9 @@ struct Alignment {
       query_pos += (edlib_res.alignment[i] != 2);
     }
   };
+
+  std::for_each(overlap_alignments.cbegin(), overlap_alignments.cend(),
+                update_coverage);
 
   {
     auto spikes = std::vector<std::uint32_t>();
@@ -282,7 +285,7 @@ struct Alignment {
                    static_cast<std::int32_t>(covg.signal[3])) <
               static_cast<std::uint32_t>(std::round(sum * 0.333)) &&
           covg.signal[0] + covg.signal[3] >
-              static_cast<std::uint32_t>(std::round(sum * 0.8))) {
+              static_cast<std::uint32_t>(std::round(sum * match_ratio))) {
         snp_candidates.push_back(pos);
       }
     }
@@ -392,7 +395,7 @@ struct Alignment {
   auto const ovlps_aligned = FindAlignments(state, reads_overlaps, query_idx);
 
   auto const& query_read = reads_overlaps[query_idx].read;
-  auto intervals = FindIntervals(query_read, ovlps_aligned, 0.9);
+  auto intervals = FindIntervals(query_read, ovlps_aligned, 0.95);
 
   if (intervals.empty()) {
     // maybe think of a better way to do this
@@ -454,11 +457,11 @@ struct Alignment {
       auto valid = true;
       auto snp_idx = 0U;
 
+      auto query_anchor = ovlp.lhs_begin;
+      auto target_anchor = ovlp.rhs_begin;
+
       auto query_pos = ovlp.lhs_begin;
       auto target_pos = ovlp.rhs_begin;
-
-      auto query_interval = Interval{query_pos, query_pos};
-      auto target_interval = Interval{target_pos, target_pos};
 
       for (auto i = 0U;
            i < edlib_res.alignmentLength && intv_iter != intervals.end(); ++i) {
@@ -473,10 +476,13 @@ struct Alignment {
                     intv_iter->snp_sites[snp_idx] == query_pos);
 
         if (query_pos == intv_iter->end_idx) {
-          if (valid) {
+          if (valid || true) {
             intv_iter->sections[intv_iter->n_active] = {
-                .query_interval = query_interval,
-                .target_interval = target_interval,
+                .query_interval = {.start_idx =
+                                       query_anchor - intv_iter->start_idx,
+                                   .end_idx = query_pos - intv_iter->start_idx},
+                .target_interval = {.start_idx = target_anchor,
+                                    .end_idx = target_pos},
                 .target_id = ovlp.rhs_id};
 
             unfilled -= (intv_iter->n_active + 1U == kQuerySectionCap);
@@ -486,12 +492,12 @@ struct Alignment {
           ++intv_iter;
         }
 
-        if (query_pos == intv_iter->start_idx) {
+        if (intv_iter != intervals.end() && query_pos == intv_iter->start_idx) {
           valid = true;
           snp_idx = 0U;
 
-          query_interval = {query_pos, query_pos};
-          target_interval = {target_pos, target_pos};
+          query_anchor = query_pos;
+          target_anchor = target_pos;
         }
       }
 
@@ -502,9 +508,8 @@ struct Alignment {
 
     for (auto idx = 0U; idx < intervals.size(); ++idx) {
       for (auto i = 0U; i < intervals[idx].n_active; ++i) {
-        auto const local_interval = intervals[idx].sections[idx].query_interval;
-        auto const target_interval =
-            intervals[idx].sections[idx].target_interval;
+        auto const local_interval = intervals[idx].sections[i].query_interval;
+        auto const target_interval = intervals[idx].sections[i].target_interval;
         auto const target_substr =
             std::lower_bound(reads_overlaps.begin(), reads_overlaps.end(),
                              intervals[idx].sections[i].target_id,
