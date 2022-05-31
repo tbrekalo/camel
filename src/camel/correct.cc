@@ -6,6 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <numeric>
+#include <random>
 
 #include "biosoup/timer.hpp"
 #include "camel/coverage.h"
@@ -238,6 +239,94 @@ struct Alignment {
   }
 
   return dst;
+}
+
+[[nodiscard]] static auto EstimateCoverage(
+    State& state, std::vector<ReadOverlapsPair> const& reads_overlaps)
+    -> std::uint16_t {
+  auto const kSubsampleSize =
+      std::max(static_cast<std::size_t>(reads_overlaps.size() * 0.10),
+               std::min(100UL, reads_overlaps.size()));
+
+  auto pile_futures = std::vector<std::future<std::uint16_t>>();
+  pile_futures.reserve(kSubsampleSize);
+
+  // generate random ids
+  auto rng_idxes = std::vector<std::uint32_t>(reads_overlaps.size());
+  std::iota(rng_idxes.begin(), rng_idxes.end(), 0U);
+
+  auto rng_engine = std::mt19937(42U);
+  std::shuffle(rng_idxes.begin(), rng_idxes.end(), rng_engine);
+
+  rng_idxes.resize(kSubsampleSize);
+  for (auto const rng_idx : rng_idxes) {
+    pile_futures.emplace_back(state.thread_pool->Submit(
+        [&reads_overlaps](std::uint32_t const read_idx) -> std::uint16_t {
+          auto constexpr kShrinkShift = 3U;
+          auto const& backbone_read = reads_overlaps[read_idx].read;
+          auto pile = std::vector<std::uint16_t>(
+              ((backbone_read->inflated_len) >> kShrinkShift) + 2U, 0U);
+
+          auto events = std::vector<std::uint32_t>();
+          for (auto const& ovlp : reads_overlaps[read_idx].overlaps) {
+            events.push_back(((ovlp.rhs_begin >> kShrinkShift) + 1U) << 1U);
+            events.push_back((((ovlp.rhs_end >> kShrinkShift) - 1U) << 1U) |
+                             1U);
+          }
+
+          for (auto idx = 0U; idx != reads_overlaps.size(); ++idx) {
+            if (idx != read_idx) {
+              auto ovlp_iter = std::lower_bound(
+                  reads_overlaps[idx].overlaps.cbegin(),
+                  reads_overlaps[idx].overlaps.cend(), backbone_read->id,
+                  [](biosoup::Overlap const& ovlp, std::uint32_t const read_id)
+                      -> bool { return ovlp.lhs_id < read_id; });
+
+              for (; ovlp_iter != reads_overlaps[idx].overlaps.cend() &&
+                     ovlp_iter->lhs_id == backbone_read->id;
+                   ++ovlp_iter) {
+                events.push_back(((ovlp_iter->lhs_begin >> kShrinkShift) + 1U)
+                                 << 1U);
+                events.push_back(
+                    (((ovlp_iter->lhs_end >> kShrinkShift) - 1U) << 1U) | 1U);
+              }
+            }
+          }
+
+          auto convg = 0U;
+          auto last_event = 0U;
+          std::sort(events.begin(), events.end());
+          for (auto const event : events) {
+            for (auto i = last_event; i < (event >> 1U); ++i) {
+              if (convg > 0U) {
+                pile[i] =
+                    std::clamp(pile[i] + convg, 0U,
+                               1U * std::numeric_limits<std::uint16_t>::max());
+              }
+            }
+
+            convg += 1 - (2 * (event & 1));
+            last_event = (event >> 1U);
+          }
+
+          std::nth_element(pile.begin(),
+                           std::next(pile.begin(), pile.size() / 2U),
+                           pile.end());
+
+          return pile[pile.size() / 2U];
+        },
+        rng_idx));
+  }
+
+  auto medians = std::vector<std::uint16_t>(pile_futures.size());
+  std::transform(pile_futures.begin(), pile_futures.end(), medians.begin(),
+                 std::mem_fn(&std::future<std::uint16_t>::get));
+
+  std::nth_element(medians.begin(),
+                   std::next(medians.begin(), medians.size() / 2U),
+                   medians.end());
+
+  return medians[medians.size() / 2U];
 }
 
 [[nodiscard]] static auto FindIntervals(
@@ -567,6 +656,12 @@ auto SnpErrorCorrect(
   fmt::print(stderr,
              "[camel::SnpErrorCorrect]({:12.3f}) tied reads with overlaps\n",
              timer.Stop());
+
+  timer.Start();
+  auto const kEstimatedCovg = detail::EstimateCoverage(state, reads_overlaps);
+  fmt::print(stderr,
+             "[camel::SnpErrorCorrect]({:12.3f}) estimated coverage: {}\n",
+             timer.Stop(), kEstimatedCovg);
 
   {
     timer.Start();
