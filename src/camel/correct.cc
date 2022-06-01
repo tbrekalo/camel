@@ -29,11 +29,8 @@ static auto constexpr kSpikeMergeLen = 240U;
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
 
-static auto constexpr kBatchCap = 1UL << 28UL;
-
-static auto constexpr kQuerySectionCap = 1U << 4U;
-
 static auto constexpr kReportMaks = (1U << 10U) - 1U;
+static auto constexpr kSnpProximityLimit = 50U;
 
 struct FastCovg {
   // mat, del, ins, mis
@@ -45,10 +42,25 @@ struct Interval {
   std::uint32_t end_idx;
 };
 
-struct Section {
+struct SnpEvidence {
+  std::uint32_t query_pos;
+  char base;
+};
+
+auto operator==(SnpEvidence const lhs, SnpEvidence const rhs) noexcept -> bool {
+  return lhs.query_pos == rhs.query_pos && lhs.base == rhs.base;
+}
+
+auto operator!=(SnpEvidence const lhs, SnpEvidence const rhs) noexcept -> bool {
+  return !(lhs == rhs);
+}
+
+struct Segment {
   Interval query_interval;
   Interval target_interval;
   std::uint32_t target_id;
+
+  std::vector<SnpEvidence> evidence;
 };
 
 struct PloidyInterval : Interval {
@@ -56,8 +68,7 @@ struct PloidyInterval : Interval {
 };
 
 struct CorrectionInterval : PloidyInterval {
-  std::array<Section, kQuerySectionCap + 1U> sections;
-  std::uint32_t n_active;
+  std::vector<Segment> Segments;
 };
 
 struct OverlapEdlibAlignment {
@@ -69,10 +80,9 @@ static inline auto IntervalLen(Interval const& intv) -> std::uint32_t {
   return intv.end_idx - intv.start_idx;
 }
 
-struct Alignment {
-  std::uint32_t query_start;
-  std::string target_str;
-  EdlibAlignResult edlib_res;
+struct AnnotedRead {
+  std::unique_ptr<biosoup::NucleicAcid> read;
+  std::vector<std::uint32_t> snp_sites;
 };
 
 [[nodiscard]] static auto FindOverlapsAndFilterReads(
@@ -153,10 +163,11 @@ struct Alignment {
           .swap(reads_overlaps);
     }
 
-    fmt::print(stderr,
-               "[camel::CollectOverlapsAndFilterReads]({:12.3f}) stored {} / "
-               "{} unmapped reads\n",
-               timer.Stop(), n_unmapped, n_unmapped + n_mapped);
+    fmt::print(
+        stderr,
+        "[camel::detail::CollectOverlapsAndFilterReads]({:12.3f}) stored {} / "
+        "{} unmapped reads\n",
+        timer.Stop(), n_unmapped, n_unmapped + n_mapped);
   }
 
   return reads_overlaps;
@@ -332,13 +343,17 @@ struct Alignment {
 [[nodiscard]] static auto FindIntervals(
     std::unique_ptr<biosoup::NucleicAcid> const& query_read,
     std::vector<OverlapEdlibAlignment> const& overlap_alignments,
-    double const match_ratio) -> std::vector<CorrectionInterval> {
+    std::uint16_t kEstimatedCovg, double const kMatchRatio)
+    -> std::vector<CorrectionInterval> {
   if (query_read->inflated_len < 1.2 * kSpikeMergeLen) {
     return {};
   }
 
   auto dst = std::vector<CorrectionInterval>();
   auto coverage = std::vector<FastCovg>(query_read->inflated_len);
+
+  auto const kSnpCutOff = static_cast<std::uint16_t>(
+      kEstimatedCovg + std::round(5 * std::sqrt(kEstimatedCovg)));
 
   auto const update_coverage =
       [&overlap_alignments, &coverage,
@@ -358,7 +373,7 @@ struct Alignment {
     auto spikes = std::vector<std::uint32_t>();
     spikes.reserve(query_read->inflated_len / 5U);
 
-    auto snp_candidates = std::vector<std::uint32_t>();
+    auto snp_candidates = std::vector<std::pair<std::uint32_t, bool>>();
     snp_candidates.reserve(query_read->inflated_len / 10U);
 
     for (auto pos = 0U; pos < coverage.size(); ++pos) {
@@ -366,16 +381,13 @@ struct Alignment {
       auto const sum = std::accumulate(covg.signal.cbegin(), covg.signal.cend(),
                                        std::uint_fast16_t(0));
       if (covg.signal[0] <
-          static_cast<std::uint32_t>(std::round(match_ratio * sum))) {
+          static_cast<std::uint32_t>(std::round(kMatchRatio * sum))) {
         spikes.push_back(pos);
       }
 
-      if (std::abs(static_cast<std::int32_t>(covg.signal[0]) -
-                   static_cast<std::int32_t>(covg.signal[3])) <
-              static_cast<std::uint32_t>(std::round(sum * 0.333)) &&
-          covg.signal[0] + covg.signal[3] >
-              static_cast<std::uint32_t>(std::round(sum * match_ratio))) {
-        snp_candidates.push_back(pos);
+      if (sum <= kSnpCutOff && sum * 0.2 < covg.signal[3] &&
+          covg.signal[3] < sum * 0.8) {
+        snp_candidates.emplace_back(pos, true);
       }
     }
 
@@ -455,14 +467,32 @@ struct Alignment {
 
     decltype(dst)(dst.begin(), dst.end()).swap(dst);
 
+    // prune snps
+    {
+      for (auto i = 0U; i < snp_candidates.size(); ++i) {
+        if (i > 0U && snp_candidates[i].second - snp_candidates[i - 1U].first <
+                          kSnpProximityLimit) {
+          snp_candidates[i].second = false;
+        }
+      }
+
+      auto const erase_first = std::stable_partition(
+          snp_candidates.begin(), snp_candidates.end(),
+          [](std::pair<std::uint32_t, bool> const pub) -> bool {
+            return pub.second;
+          });
+
+      snp_candidates.erase(erase_first, snp_candidates.end());
+    }
+
     {
       auto i = 0U;
       for (auto& interval : dst) {
-        for (;
-             i < snp_candidates.size() && snp_candidates[i] < interval.end_idx;
+        for (; i < snp_candidates.size() &&
+               snp_candidates[i].first < interval.end_idx;
              ++i) {
-          if (snp_candidates[i] >= interval.start_idx) {
-            interval.snp_sites.push_back(snp_candidates[i]);
+          if (snp_candidates[i].first >= interval.start_idx) {
+            interval.snp_sites.push_back(snp_candidates[i].first);
           }
         }
 
@@ -479,12 +509,14 @@ struct Alignment {
     State& state,
     std::unique_ptr<spoa::AlignmentEngine> const& alignment_engine,
     std::vector<ReadOverlapsPair> const& reads_overlaps,
-    std::uint32_t const query_idx) -> std::unique_ptr<biosoup::NucleicAcid> {
+    std::uint32_t const query_idx, std::uint16_t const kEstimatedCovg,
+    double const kMatchRatio) -> std::unique_ptr<biosoup::NucleicAcid> {
   auto dst = std::unique_ptr<biosoup::NucleicAcid>();
   auto const ovlps_aligned = FindAlignments(state, reads_overlaps, query_idx);
 
   auto const& query_read = reads_overlaps[query_idx].read;
-  auto intervals = FindIntervals(query_read, ovlps_aligned, 0.95);
+  auto intervals =
+      FindIntervals(query_read, ovlps_aligned, kEstimatedCovg, kMatchRatio);
 
   if (intervals.empty()) {
     // maybe think of a better way to do this
@@ -535,7 +567,6 @@ struct Alignment {
       graphs[interval_idx].AddAlignment(alignment, target_substr);
     };
 
-    auto unfilled = intervals.size();
     for (auto const& [ovlp, edlib_res] : ovlps_aligned) {
       auto intv_iter = std::upper_bound(
           intervals.begin(), intervals.end(), ovlp.lhs_begin,
@@ -543,8 +574,12 @@ struct Alignment {
             return pos < intv.end_idx;
           });
 
-      auto valid = true;
       auto snp_idx = 0U;
+      auto snp_evidence = std::vector<SnpEvidence>();
+
+      if (intv_iter != intervals.end()) {
+        snp_evidence.reserve(intv_iter->snp_sites.size());
+      }
 
       auto query_anchor = ovlp.lhs_begin;
       auto target_anchor = ovlp.rhs_begin;
@@ -557,51 +592,47 @@ struct Alignment {
         query_pos += (edlib_res.alignment[i] != 2U);
         target_pos += (edlib_res.alignment[i] != 1U);
 
-        valid &= (snp_idx >= intv_iter->snp_sites.size() ||
-                  !(intv_iter->snp_sites[snp_idx] == query_pos &&
-                    edlib_res.alignment[i] != 0U));
+        if (snp_idx < intv_iter->snp_sites.size() &&
+            intv_iter->snp_sites[snp_idx] == query_pos) {
+          if (ovlp.strand) {
+            // TODO: adjust
+            snp_evidence.emplace_back(query_pos, 'A');
+          } else {
+          }
 
-        snp_idx += (snp_idx < intv_iter->snp_sites.size() &&
-                    intv_iter->snp_sites[snp_idx] == query_pos);
+          ++snp_idx;
+        }
 
         if (query_pos == intv_iter->end_idx) {
-          if (valid || true) {
-            intv_iter->sections[intv_iter->n_active] = {
-                .query_interval = {.start_idx =
-                                       query_anchor - intv_iter->start_idx,
-                                   .end_idx = query_pos - intv_iter->start_idx},
-                .target_interval = {.start_idx = target_anchor,
-                                    .end_idx = target_pos},
-                .target_id = ovlp.rhs_id};
-
-            unfilled -= (intv_iter->n_active + 1U == kQuerySectionCap);
-            intv_iter->n_active += (intv_iter->n_active != kQuerySectionCap);
-          }
+          intv_iter->Segments.push_back(
+              {.query_interval = {.start_idx =
+                                      query_anchor - intv_iter->start_idx,
+                                  .end_idx = query_pos - intv_iter->start_idx},
+               .target_interval = {.start_idx = target_anchor,
+                                   .end_idx = target_pos},
+               .target_id = ovlp.rhs_id,
+               .evidence = std::move(snp_evidence)});
 
           ++intv_iter;
         }
 
         if (intv_iter != intervals.end() && query_pos == intv_iter->start_idx) {
-          valid = true;
           snp_idx = 0U;
+          snp_evidence.reserve(intv_iter->snp_sites.size());
 
           query_anchor = query_pos;
           target_anchor = target_pos;
         }
       }
-
-      if (unfilled == 0U) {
-        break;
-      }
     }
 
     for (auto idx = 0U; idx < intervals.size(); ++idx) {
-      for (auto i = 0U; i < intervals[idx].n_active; ++i) {
-        auto const local_interval = intervals[idx].sections[i].query_interval;
-        auto const target_interval = intervals[idx].sections[i].target_interval;
+      for (auto i = 0U; i < intervals[idx].Segments.size(); ++i) {
+        auto const local_interval = intervals[idx].Segments[i].query_interval;
+        auto const target_interval = intervals[idx].Segments[i].target_interval;
         auto const target_substr =
             std::lower_bound(reads_overlaps.begin(), reads_overlaps.end(),
-                             intervals[idx].sections[i].target_id,
+                             intervals[idx].Segments[i].target_id,
                              [](ReadOverlapsPair const& ro,
                                 std::uint32_t const target_id) -> bool {
                                return ro.read->id < target_id;
@@ -692,18 +723,18 @@ auto SnpErrorCorrect(
     auto correct_futures =
         std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
 
-    auto const correct_async = [&state, &reads_overlaps, &alignment_engines](
-                                   std::uint32_t const query_idx)
+    auto const correct_async = [&state, &reads_overlaps, &alignment_engines,
+                                kEstimatedCovg](std::uint32_t const query_idx)
         -> std::future<std::unique_ptr<biosoup::NucleicAcid>> {
       return state.thread_pool->Submit(
-          [&alignment_engines](
+          [&alignment_engines, kEstimatedCovg](
               State& state, std::vector<ReadOverlapsPair> const& reads_overlaps,
               std::uint32_t const& query_idx)
               -> std::unique_ptr<biosoup::NucleicAcid> {
             auto const& alignment_engine =
                 alignment_engines[std::this_thread::get_id()];
             return detail::CorrectRead(state, alignment_engine, reads_overlaps,
-                                       query_idx);
+                                       query_idx, kEstimatedCovg, 0.95);
           },
           std::ref(state), std::cref(reads_overlaps), query_idx
 
