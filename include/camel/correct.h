@@ -12,13 +12,13 @@
 
 namespace camel {
 
-struct POAConfig {
+CAMEL_EXPORT struct POAConfig {
   std::int8_t match = 3;
   std::int8_t mismatch = -5;
   std::int8_t gap = -3;
 };
 
-struct PolishConfig {
+CAMEL_EXPORT struct PolishConfig {
   POAConfig poa_cfg;
 };
 
