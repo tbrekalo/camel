@@ -664,7 +664,8 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
           ++snp_idx;
         }
 
-        if (indle_idx < intv_iter->indel_signals.size() &&
+        if ((edlib_res.alignment[i] == 1 || edlib_res.alignment[i] == 2) &&
+            indle_idx < intv_iter->indel_signals.size() &&
             intv_iter->indel_signals[indle_idx] == query_pos) {
           if (ovlp.strand) {
             indle_evidence.push_back(Evidence{
