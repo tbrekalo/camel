@@ -24,7 +24,7 @@ namespace camel {
 namespace detail {
 
 static auto constexpr kWinPadding = 13U;
-static auto constexpr kSpikeMergeLen = 240U;
+static auto constexpr kSpikeMergeLen = 420U;
 
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
@@ -44,11 +44,11 @@ struct Interval {
 
 struct Evidence {
   std::uint32_t query_pos;
-  std::uint8_t code;
+  char base;
 };
 
 auto operator==(Evidence const lhs, Evidence const rhs) noexcept -> bool {
-  return lhs.query_pos == rhs.query_pos && lhs.code == rhs.code;
+  return lhs.query_pos == rhs.query_pos && lhs.base == rhs.base;
 }
 
 auto operator!=(Evidence const lhs, Evidence const rhs) noexcept -> bool {
@@ -90,7 +90,7 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
   auto i = 0U, j = 0U;
   for (; i < lhs.size() && j < rhs.size(); ++i, ++j) {
     if (lhs[i].query_pos == rhs[j].query_pos) {
-      dst += lhs[i].code != rhs[j].code;
+      dst += lhs[i].base != rhs[j].base;
     } else if (lhs[i].query_pos < rhs[j].query_pos) {
       ++dst, ++i;
     } else {
@@ -531,8 +531,8 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
           if (snp_candidates[i].first >= interval.start_idx) {
             interval.snp_evidence.push_back(
                 Evidence{.query_pos = snp_candidates[i].first,
-                         .code = static_cast<std::uint8_t>(
-                             query_read->Code(snp_candidates[i].first))});
+                         .base = biosoup::kNucleotideDecoder[query_read->Code(
+                             snp_candidates[i].first)]});
           }
         }
 
@@ -649,36 +649,54 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
         if (snp_idx < intv_iter->snp_evidence.size() &&
             intv_iter->snp_evidence[snp_idx].query_pos == query_pos) {
           if (ovlp.strand) {
-            snp_evidence.push_back(Evidence{
-                .query_pos = query_pos,
-                .code =
-                    static_cast<std::uint8_t>(target_read->Code(target_pos))});
-          } else {
             snp_evidence.push_back(
                 Evidence{.query_pos = query_pos,
-                         .code = static_cast<std::uint8_t>(
-                             3 ^ target_read->Code(target_read->inflated_len -
-                                                   1U - target_pos))});
+                         .base = target_pos < target_read->inflated_len
+                                     ? biosoup::kNucleotideDecoder[
+
+                                           target_read->Code(target_pos)]
+                                     : '-'});
+          } else {
+            snp_evidence.push_back(Evidence{
+                .query_pos = query_pos,
+                .base =
+                    target_pos < target_read->inflated_len
+                        ? biosoup::kNucleotideDecoder
+                              [3 ^ target_read->Code(target_read->inflated_len -
+                                                     1U - target_pos)]
+                        : '-'});
           }
 
           ++snp_idx;
         }
 
-        if ((edlib_res.alignment[i] == 1 || edlib_res.alignment[i] == 2) &&
+        if (edlib_res.alignment[i] == 2 &&
             indle_idx < intv_iter->indel_signals.size() &&
             intv_iter->indel_signals[indle_idx] == query_pos) {
           if (ovlp.strand) {
-            indle_evidence.push_back(Evidence{
-                .query_pos = query_pos,
-                .code =
-                    static_cast<std::uint8_t>(target_read->Code(target_pos))});
-          } else {
             indle_evidence.push_back(
                 Evidence{.query_pos = query_pos,
-                         .code = static_cast<std::uint8_t>(
-                             3 ^ target_read->Code(target_read->inflated_len -
-                                                   1U - target_pos))});
+                         .base = biosoup::kNucleotideDecoder[target_read->Code(
+                             target_pos)]});
+          } else {
+            indle_evidence.push_back(Evidence{
+                .query_pos = query_pos,
+                .base =
+                    target_pos < target_read->inflated_len
+                        ? biosoup::kNucleotideDecoder
+                              [3 ^ target_read->Code(target_read->inflated_len -
+                                                     1U - target_pos)]
+                        : '-'});
           }
+
+          ++indle_idx;
+        }
+
+        if (edlib_res.alignment[i] == 1 &&
+            indle_idx < intv_iter->indel_signals.size() &&
+            intv_iter->indel_signals[indle_idx] == query_pos) {
+          indle_evidence.push_back(
+              Evidence{.query_pos = query_pos, .base = '-'});
 
           ++indle_idx;
         }
