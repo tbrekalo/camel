@@ -29,7 +29,7 @@ static auto constexpr kSpikeMergeLen = 420U;
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
 
-static auto constexpr kReportMaks = (1U << 10U) - 1U;
+static auto constexpr kBatchSize = (1U << 10U) - 1U;
 static auto constexpr kSnpProximityLimit = 50U;
 
 struct FastCovg {
@@ -401,8 +401,8 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
     auto snp_candidates = std::vector<std::pair<std::uint32_t, bool>>();
     snp_candidates.reserve(query_read->inflated_len / 10U);
 
-    auto indel_candidates = std::vector<std::uint32_t>();
-    indel_candidates.reserve(snp_candidates.size());
+    // auto indel_candidates = std::vector<std::uint32_t>();
+    // indel_candidates.reserve(snp_candidates.size());
 
     for (auto pos = 0U; pos < coverage.size(); ++pos) {
       auto const& covg = coverage[pos];
@@ -410,21 +410,20 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
         spikes.push_back(pos);
       }
 
-      if (kEstimatedCovg * 0.25 <= covg.signal[3] &&
+      if (covg.signal[0] <= kEstimatedCovg * 0.60 &&
+          kEstimatedCovg * 0.2 <= covg.signal[3] &&
           covg.signal[3] <= 0.8 * kEstimatedCovg &&
           covg.signal[3] < kSnpCutOff) {
         snp_candidates.emplace_back(pos, true);
       }
 
-      if ((kEstimatedCovg * 0.33 <= covg.signal[1] &&
-           covg.signal[1] <= 0.66 * kEstimatedCovg &&
-           covg.signal[1] <= kSnpCutOff) ||
+      // if ((kEstimatedCovg * 0.80 <= covg.signal[1] &&
+      //      covg.signal[1] <= kSnpCutOff) ||
 
-          (kEstimatedCovg * 0.33 <= covg.signal[2] &&
-           covg.signal[1] <= 0.66 * kEstimatedCovg &&
-           covg.signal[1] <= kSnpCutOff)) {
-        indel_candidates.push_back(pos);
-      }
+      //     (kEstimatedCovg * 0.80 <= covg.signal[2] &&
+      //      covg.signal[2] <= kSnpCutOff)) {
+      //   indel_candidates.push_back(pos);
+      // }
     }
 
     if (!spikes.empty()) {
@@ -432,7 +431,6 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
 
       auto groups = std::vector<std::pair<std::uint32_t, std::uint32_t>>();
       groups.resize(spikes.size());
-
       std::generate_n(
           groups.begin(), groups.size(),
           [i = 0U]() mutable -> std::pair<std::uint32_t, std::uint32_t> {
@@ -536,19 +534,19 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
           }
         }
 
-        for (; j < indel_candidates.size() &&
-               indel_candidates[j] < interval.end_idx;
-             ++j) {
-          if (indel_candidates[j] >= interval.start_idx) {
-            interval.indel_signals.push_back(indel_candidates[j]);
-          }
-        }
+        // for (; j < indel_candidates.size() &&
+        //        indel_candidates[j] < interval.end_idx;
+        //      ++j) {
+        //   if (indel_candidates[j] >= interval.start_idx) {
+        //     interval.indel_signals.push_back(indel_candidates[j]);
+        //   }
+        // }
 
         decltype(interval.snp_evidence)(interval.snp_evidence)
             .swap(interval.snp_evidence);
 
-        decltype(interval.indel_signals)(interval.indel_signals)
-            .swap(interval.indel_signals);
+        // decltype(interval.indel_signals)(interval.indel_signals)
+        //     .swap(interval.indel_signals);
       }
     }
   }
@@ -633,7 +631,7 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
 
       if (intv_iter != intervals.end()) {
         snp_evidence.reserve(intv_iter->snp_evidence.size());
-        indle_evidence.reserve(intv_iter->indel_signals.size());
+        // indle_evidence.reserve(intv_iter->indel_signals.size());
       }
 
       auto query_anchor = ovlp.lhs_begin;
@@ -670,27 +668,27 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
           ++snp_idx;
         }
 
-        if (edlib_res.alignment[i] == 2 &&
-            indle_idx < intv_iter->indel_signals.size() &&
-            intv_iter->indel_signals[indle_idx] == query_pos) {
-          if (ovlp.strand) {
-            indle_evidence.push_back(
-                Evidence{.query_pos = query_pos,
-                         .base = biosoup::kNucleotideDecoder[target_read->Code(
-                             target_pos)]});
-          } else {
-            indle_evidence.push_back(Evidence{
-                .query_pos = query_pos,
-                .base =
-                    target_pos < target_read->inflated_len
-                        ? biosoup::kNucleotideDecoder
-                              [3 ^ target_read->Code(target_read->inflated_len -
-                                                     1U - target_pos)]
-                        : '-'});
-          }
+        // if (edlib_res.alignment[i] == 2 &&
+        //     indle_idx < intv_iter->indel_signals.size() &&
+        //     intv_iter->indel_signals[indle_idx] == query_pos) {
+        //   if (ovlp.strand) {
+        //     indle_evidence.push_back(
+        //         Evidence{.query_pos = query_pos,
+        //                  .base = biosoup::kNucleotideDecoder[target_read->Code(
+        //                      target_pos)]});
+        //   } else {
+        //     indle_evidence.push_back(Evidence{
+        //         .query_pos = query_pos,
+        //         .base =
+        //             target_pos < target_read->inflated_len
+        //                 ? biosoup::kNucleotideDecoder
+        //                       [3 ^ target_read->Code(target_read->inflated_len -
+        //                                              1U - target_pos)]
+        //                 : '-'});
+        //   }
 
-          ++indle_idx;
-        }
+        //   ++indle_idx;
+        // }
 
         if (edlib_res.alignment[i] == 1 &&
             indle_idx < intv_iter->indel_signals.size() &&
@@ -723,7 +721,7 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
           snp_evidence.reserve(intv_iter->snp_evidence.size());
 
           indle_idx = 0U;
-          indle_evidence.reserve(intv_iter->indel_signals.size());
+          // indle_evidence.reserve(intv_iter->indel_signals.size());
 
           query_anchor = query_pos;
           target_anchor = target_pos;
@@ -752,25 +750,25 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
         }
       }
 
-      if (intervals[idx].segments.empty()) {
-        auto const& ref_indles = intervals[idx].segments.front().indel_evidence;
-        for (auto& segment : intervals[idx].segments) {
-          segment.diff_score = EvidenceDiff(segment.indel_evidence, ref_indles);
-        }
+      // if (!intervals[idx].segments.empty()) {
+      //   auto const& ref_indles = intervals[idx].segments.front().indel_evidence;
+      //   for (auto& segment : intervals[idx].segments) {
+      //     segment.diff_score = EvidenceDiff(segment.indel_evidence, ref_indles);
+      //   }
 
-        auto const pivot = std::next(intervals[idx].segments.begin(),
-                                     intervals[idx].segments.size() * 0.7);
-        if (pivot != intervals[idx].segments.begin() &&
-            pivot != intervals[idx].segments.end()) {
-          std::partial_sort(intervals[idx].segments.begin(), pivot,
-                            intervals[idx].segments.end(),
-                            [](Segment const& lhs, Segment const& rhs) -> bool {
-                              return lhs.diff_score < rhs.diff_score;
-                            });
+      //   auto const pivot = std::next(intervals[idx].segments.begin(),
+      //                                intervals[idx].segments.size() * 0.7);
+      //   if (pivot != intervals[idx].segments.begin() &&
+      //       pivot != intervals[idx].segments.end()) {
+      //     std::partial_sort(intervals[idx].segments.begin(), pivot,
+      //                       intervals[idx].segments.end(),
+      //                       [](Segment const& lhs, Segment const& rhs) -> bool {
+      //                         return lhs.diff_score < rhs.diff_score;
+      //                       });
 
-          intervals[idx].segments.erase(pivot, intervals[idx].segments.end());
-        }
-      }
+      //     intervals[idx].segments.erase(pivot, intervals[idx].segments.end());
+      //   }
+      // }
 
       for (auto i = 0U; i < intervals[idx].segments.size(); ++i) {
         auto const local_interval = intervals[idx].segments[i].query_interval;
@@ -883,22 +881,33 @@ auto SnpErrorCorrect(
       );
     };
 
-    dst.reserve(reads_overlaps.size());
-    correct_futures.reserve(reads_overlaps.size());
-    for (auto const& [id, _] : reads_overlaps) {
-      correct_futures.emplace_back(correct_async(id));
-    }
+    auto const kBatchSz = state.thread_pool->num_threads();
 
-    for (auto idx = 0U; idx < reads_overlaps.size(); ++idx) {
-      dst.push_back(correct_futures[idx].get());
-
-      if (((idx + 1U) & detail::kReportMaks) == 0U ||
-          idx + 1U == reads_overlaps.size()) {
-        fmt::print(
-            stderr,
-            "\r[camel::SnpErrorCorrect]({:12.3f}) corrected {} / {} reads",
-            timer.Lap(), idx + 1U, reads_overlaps.size());
+    correct_futures.reserve(kBatchSz);
+    for (auto first = reads_overlaps.cbegin();
+         first != reads_overlaps.cend();) {
+      auto last = first;
+      for (auto i = 0U; i < kBatchSz && last != reads_overlaps.cend(); ++i) {
+        ++last;
       }
+
+      for (; first != last; ++first) {
+        correct_futures.emplace_back(correct_async(first.key()));
+      }
+
+      std::transform(
+          correct_futures.begin(), correct_futures.end(),
+          std::back_inserter(dst),
+          std::mem_fn(
+              &std::future<std::unique_ptr<biosoup::NucleicAcid>>::get));
+
+      fmt::print(
+          stderr,
+          "\r[camel::SnpErrorCorrect]({:12.3f}) corrected {} / {} reads",
+          timer.Lap(),
+          std::distance(reads_overlaps.cbegin(), last) / reads_overlaps.size());
+
+      correct_futures.clear();
     }
 
     fmt::print(stderr, "\n");
