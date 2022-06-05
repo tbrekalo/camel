@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <iterator>
 #include <numeric>
@@ -10,6 +11,7 @@
 #include "detail/overlap.h"
 #include "fmt/core.h"
 #include "ram/minimizer_engine.hpp"
+#include "tsl/robin_set.h"
 
 namespace camel {
 
@@ -18,7 +20,8 @@ namespace detail {
 static constexpr auto kMinimizeBatchCap = 1UL << 34UL;
 static constexpr auto kMapBatchCap = 1UL << 26UL;
 
-static constexpr auto kCoverageFactor = 12UL;
+static constexpr auto kExpectedCoverage = 16U;
+static constexpr auto kWindowLen = 420U;
 
 static auto FindBatchLast(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator first,
@@ -32,84 +35,63 @@ static auto FindBatchLast(
   return first;
 }
 
-struct SweepEvent {
-  std::uint32_t pos;
-  std::uint32_t ovlp_id;
-};
-
 static auto SweepOverlaps(std::vector<biosoup::Overlap>& overlaps,
-                          std::uint64_t estimated_covg)
-    -> std::pair<std::uint64_t, std::uint64_t> {
-  auto const cmp_lambda =
-      [](std::pair<std::uint32_t, std::uint32_t> const& lhs_pis,
-         std::pair<std::uint32_t, std::uint32_t> const& rhs_pis) -> bool {
-    return lhs_pis.second < rhs_pis.second;
-  };
+                          std::uint32_t const kReadLen) -> std::uint64_t {
+  auto windows =
+      std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>>();
+  windows.reserve(std::round(1.0 * kReadLen / kWindowLen));
 
-  auto active_sz = 0U;
-  auto active_buff = std::array<std::pair<std::uint32_t, std::uint32_t>,
-                                detail::kCoverageFactor>();
+  std::generate_n(std::back_inserter(windows), windows.capacity(),
+                  []() -> std::vector<std::pair<std::uint32_t, std::uint32_t>> {
+                    auto dst =
+                        std::vector<std::pair<std::uint32_t, std::uint32_t>>();
+                    dst.reserve(kExpectedCoverage + 1U);
 
-  auto events = std::vector<SweepEvent>();
+                    return dst;
+                  });
 
-  events.reserve(overlaps.size() * 2U);
-  for (auto i = 0U; i < overlaps.size(); ++i) {
-    events.emplace_back(SweepEvent{.pos = overlaps[i].lhs_begin, .ovlp_id = i});
-    events.emplace_back(SweepEvent{.pos = overlaps[i].lhs_end, .ovlp_id = i});
-  }
+  for (auto ovlp_id = 0U; ovlp_id < overlaps.size(); ++ovlp_id) {
+    auto first_idx = overlaps[ovlp_id].lhs_begin / kWindowLen;
+    auto last_idx =
+        std::min(static_cast<std::uint64_t>(
+                     std::ceil(1.0 * overlaps[ovlp_id].lhs_end / kWindowLen)) +
+                     1U,
+                 windows.size());
 
-  std::sort(events.begin(), events.end(),
-            [](SweepEvent const& lhs, SweepEvent const& rhs) -> bool {
-              return lhs.pos < rhs.pos;
-            });
-
-  for (auto const& event : events) {
-    if (active_sz > 0U) {
-      auto const active_end = std::next(active_buff.begin(), active_sz);
-      auto opt_iter = std::find_if(
-          active_buff.begin(), active_end,
-          [qo_id = event.ovlp_id](std::pair<std::uint32_t, std::uint32_t> pis)
-              -> bool { return pis.first == qo_id; });
-
-      if (opt_iter != active_buff.end()) {
-        auto last_iter = std::prev(active_end);
-        if (opt_iter != last_iter) {
-          std::swap(*opt_iter, *last_iter);
+    for (; first_idx != last_idx; ++first_idx) {
+      windows[first_idx].emplace_back(overlaps[ovlp_id].score, ovlp_id);
+      for (auto i = windows[first_idx].size() - 1U; i > 0U; --i) {
+        if (windows[first_idx][i - 1].first < windows[first_idx][i].first) {
+          std::swap(windows[first_idx][i - 1], windows[first_idx][i]);
         }
-
-        --active_sz;
       }
-    }
 
-    if (active_sz < active_buff.size()) {
-      active_buff[active_sz++] =
-          std::pair(event.ovlp_id, overlaps[event.ovlp_id].score);
-    } else {
-      auto min_iter = std::min_element(
-          active_buff.begin(), std::next(active_buff.begin(), active_sz),
-          cmp_lambda);
-
-      if (overlaps[min_iter->first].score < overlaps[event.ovlp_id].score) {
-        *min_iter = std::pair(event.ovlp_id, overlaps[event.ovlp_id].score);
-      } else {
-        std::swap(overlaps[event.ovlp_id].lhs_begin,
-                  overlaps[event.ovlp_id].lhs_end);
+      while (windows[first_idx].size() > kExpectedCoverage) {
+        windows[first_idx].resize(kExpectedCoverage);
       }
     }
   }
 
-  auto remove_iter = std::remove_if(overlaps.begin(), overlaps.end(),
-                                    [](biosoup::Overlap const& ovlp) -> bool {
-                                      return ovlp.lhs_begin > ovlp.rhs_end;
-                                    });
+  auto valid_ids = tsl::robin_set<std::uint32_t>();
+  valid_ids.reserve(windows.size() * kExpectedCoverage);
 
-  auto dst_cnt = std::distance(remove_iter, overlaps.end());
-  for (auto curr = remove_iter; curr != overlaps.end(); ++curr) {
-    estimated_covg -= curr->lhs_begin - curr->lhs_end;
+  for (auto const& window : windows) {
+    for (auto const [score, idx] : window) {
+      valid_ids.insert(idx);
+    }
   }
 
-  overlaps.erase(remove_iter, overlaps.cend());
-  return {estimated_covg, dst_cnt};
+  auto updated_ovlps = std::vector<biosoup::Overlap>();
+  updated_ovlps.reserve(valid_ids.size());
+
+  for (auto const idx : valid_ids) {
+    updated_ovlps.push_back(overlaps[idx]);
+  }
+
+  auto dst = overlaps.size() - updated_ovlps.size();
+  std::swap(overlaps, updated_ovlps);
+
+  return dst;
 }
 
 auto FormatAdjacencyList(
@@ -341,22 +323,17 @@ auto FindConfidentOverlaps(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& src_reads)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto overlaps = std::vector<std::vector<biosoup::Overlap>>(src_reads.size());
-  auto estimated_covgs = std::vector<std::uint64_t>(src_reads.size());
-
   auto sweep_futures = std::vector<std::future<std::uint64_t>>();
 
   auto minimizer_engine = ram::MinimizerEngine(
       state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
   auto map_futures = std::vector<std::future<std::vector<biosoup::Overlap>>>();
 
-  auto const store_ovlp = [&src_reads, &overlaps, &estimated_covgs](
-                              biosoup::Overlap const& ovlp) -> void {
+  auto const store_ovlp = [&src_reads,
+                           &overlaps](biosoup::Overlap const& ovlp) -> void {
     if (detail::DetermineOverlapType(ovlp, src_reads[ovlp.lhs_id]->inflated_len,
                                      src_reads[ovlp.rhs_id]->inflated_len) >
         detail::OverlapType::kUnclassified) {
-      estimated_covgs[ovlp.lhs_id] += ovlp.lhs_end - ovlp.lhs_end;
-      estimated_covgs[ovlp.rhs_id] += ovlp.rhs_end - ovlp.rhs_begin;
-
       overlaps[ovlp.lhs_id].push_back(ovlp);
       overlaps[ovlp.rhs_id].push_back(detail::ReverseOverlap(ovlp));
     }
@@ -383,7 +360,7 @@ auto FindConfidentOverlaps(
         minimize_first, src_reads.end(), detail::kMinimizeBatchCap);
 
     minimizer_engine.Minimize(minimize_first, minimize_last, true);
-    minimizer_engine.Filter(0.001);
+    minimizer_engine.Filter(map_cfg.filter_p);
 
     fmt::print(
         stderr,
@@ -410,7 +387,7 @@ auto FindConfidentOverlaps(
 
       fmt::print(
           stderr,
-          "[camel::FindConfidentOverlaps]({:12.3f}) mapped {} / {} reads\n",
+          "\r[camel::FindConfidentOverlaps]({:12.3f}) mapped {} / {} reads",
           timer.Stop(), std::distance(src_reads.begin(), map_last),
           std::distance(src_reads.begin(), minimize_last));
 
@@ -421,16 +398,12 @@ auto FindConfidentOverlaps(
         auto last = minimize_last;
 
         for (; first != last; ++first) {
-          if (estimated_covgs[(*first)->id] >=
-              detail::kCoverageFactor * (*first)->inflated_len) {
+          if (overlaps[(*first)->id].size() > 420 * 4) {
             sweep_futures.emplace_back(state.thread_pool->Submit(
-                [&overlaps,
-                 &estimated_covgs](std::uint32_t const id) -> std::uint64_t {
-                  auto const [estimated_covg, discard_cnt] =
-                      detail::SweepOverlaps(overlaps[id], estimated_covgs[id]);
-
-                  estimated_covgs[id] = estimated_covg;
-                  return discard_cnt;
+                [&src_reads,
+                 &overlaps](std::uint32_t const id) -> std::uint64_t {
+                  return detail::SweepOverlaps(overlaps[id],
+                                               src_reads[id]->inflated_len);
                 },
                 (*first)->id));
           }
@@ -443,16 +416,17 @@ auto FindConfidentOverlaps(
 
         sweep_futures.clear();
 
-        fmt::print(
-            stderr,
-            "[camel::FindConfidentOverlaps]({:12.3f}) swept {} low quality "
-            "overlaps\n",
-            timer.Stop(), n_discards);
+        // fmt::print(
+        //     stderr,
+        //     "\r[camel::FindConfidentOverlaps]({:12.3f}) swept {} low quality
+        //     " "overlaps", timer.Stop(), n_discards);
+        timer.Stop();
       }
 
       map_first = map_last;
     }
 
+    fmt::print(stderr, "\n");
     minimize_first = minimize_last;
   }
 
