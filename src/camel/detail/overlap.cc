@@ -13,15 +13,17 @@ auto DetermineOverlapType(biosoup::Overlap const ovlp,
   auto const rhs_end =
       ovlp.strand ? ovlp.rhs_end : rhs_seq_size - ovlp.rhs_begin;
 
-  auto const lhs_ovlp_size = lhs_end - lhs_begin;
-  auto const rhs_ovlp_size = rhs_end - rhs_begin;
+  auto const lhs_ovlp_len = lhs_end - lhs_begin;
+  auto const rhs_ovlp_len = rhs_end - rhs_begin;
 
-  auto const ovlp_size = std::max(lhs_ovlp_size, rhs_ovlp_size);
+  auto const ovlp_size = std::max(lhs_ovlp_len, rhs_ovlp_len);
   auto const overhang =
       std::min(lhs_begin, rhs_begin) +
       std::max(lhs_seq_size - lhs_end, rhs_seq_size - rhs_end);
 
-  if ((1.0 * ovlp_size) / (ovlp_size + overhang) <= 0.1) {
+  if ((1.0 * ovlp_size) / (ovlp_size + overhang) <= 0.1 ||
+      ((lhs_ovlp_len - rhs_ovlp_len) * (lhs_ovlp_len - rhs_ovlp_len) >
+       (lhs_ovlp_len / 15) * (rhs_ovlp_len / 15))) {
     return OverlapType::kInvalid;
   }
 
@@ -32,8 +34,8 @@ auto DetermineOverlapType(biosoup::Overlap const ovlp,
     we risk wrong classification
   */
 
-  if (lhs_ovlp_size < (lhs_ovlp_size + overhang) * 0.875 ||
-      rhs_ovlp_size < (rhs_ovlp_size + overhang) * 0.875) {
+  if (lhs_ovlp_len < (lhs_ovlp_len + overhang) * 0.875 ||
+      rhs_ovlp_len < (rhs_ovlp_len + overhang) * 0.875) {
     return OverlapType::kInternal;
 
   } else if (lhs_begin < rhs_begin &&

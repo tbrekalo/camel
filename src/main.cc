@@ -29,21 +29,34 @@ auto main(int argc, char** argv) -> int {
       cxxopts::Options("camel", "Camel is haplotype aware detection tool");
 
   /* clang-format off */
-  options.add_options()
-    ("t,threads", "number of threads avalable for execution",
-            cxxopts::value<std::uint32_t>())
-    ("s,serialization_dst", "destination folder for pile serialization",
-            cxxopts::value<std::string>()->default_value("./camel_piles"))
-    ("l,log_dst", "destination for for logging information",
-            cxxopts::value<std::string>()->default_value("./camel_log"))
-    ("o,out", "output destination folder",
-      cxxopts::value<std::string>()->default_value("./camel_out"))
+  options.add_options("mapping arguments")
     ("k,kmer", "kmer length, odd number between 3 and 31",
       cxxopts::value<std::uint8_t>()->default_value("15"))
     ("w,win_len", "window length",
       cxxopts::value<std::uint8_t>()->default_value("9"))
     ("f,filter", "filter percentage of most common minimizers",
-      cxxopts::value<double>()->default_value("0.01"))
+      cxxopts::value<double>()->default_value("0.01"));
+  options.add_options("serialization arguments")
+    ("s,serialization_dst", "destination folder for pile serialization",
+            cxxopts::value<std::string>()->default_value("./camel_piles"))
+    ("l,log_dst", "destination for for logging information",
+            cxxopts::value<std::string>()->default_value("./camel_log"))
+    ("o,out", "output destination folder",
+      cxxopts::value<std::string>()->default_value("./camel_out"));
+  options.add_options("correction arguments")
+    ("m,match", "score for matching bases",
+      cxxopts::value<std::int8_t>()->default_value("3"))
+    ("n,mismatch", "score for mismatching bases",
+      cxxopts::value<std::int8_t>()->default_value("-5"))
+    ("g,gap", "gap penalty (must be nagative)",
+      cxxopts::value<std::int8_t>()->default_value("-4"))
+    ("c,correct_window", "targeted correction window len",
+      cxxopts::value<std::uint32_t>()->default_value("320"))
+    ("d,coverage_depth", "targeted maximum coverage depth",
+      cxxopts::value<std::uint32_t>()->default_value("16"));
+  options.add_options("utility arguments")
+    ("t,threads", "number of threads avalable for execution",
+            cxxopts::value<std::uint32_t>())
     ("paths", "input fastq reads", 
             cxxopts::value<std::vector<std::string>>());
   options.parse_positional("paths");
@@ -91,10 +104,6 @@ auto main(int argc, char** argv) -> int {
     }
   }
 
-  auto map_cfg = camel::MapCfg(result["kmer"].as<std::uint8_t>(),
-                               result["win_len"].as<std::uint8_t>(),
-                               result["filter"].as<double>());
-
   decltype(paths)(std::make_move_iterator(paths.begin()),
                   std::make_move_iterator(paths.end()))
       .swap(paths);
@@ -102,14 +111,23 @@ auto main(int argc, char** argv) -> int {
   auto timer = biosoup::Timer();
 
   {
+    auto const map_cfg = camel::MapCfg(result["kmer"].as<std::uint8_t>(),
+                                       result["win_len"].as<std::uint8_t>(),
+                                       result["filter"].as<double>());
+
+    auto const correct_cfg = camel::CorrectConfig{
+        .poa_cfg = camel::POAConfig{},
+        .depth = result["coverage_depth"].as<std::uint32_t>(),
+        .correct_window = result["correct_window"].as<std::uint32_t>()};
+
     timer.Start();
     auto reads = camel::LoadSequences(state, paths);
     fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
                reads.size());
 
     timer.Start();
-    auto corrected_reads = camel::SnpErrorCorrect(
-        state, map_cfg, camel::PolishConfig{}, std::move(reads));
+    auto corrected_reads =
+        camel::SnpErrorCorrect(state, map_cfg, correct_cfg, std::move(reads));
     timer.Stop();
 
     camel::StoreSequences(state, corrected_reads, out_path, 1U << 28U);

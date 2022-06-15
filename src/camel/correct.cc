@@ -15,6 +15,8 @@
 #include "detail/overlap.h"
 #include "edlib.h"
 #include "fmt/core.h"
+#include "fmt/ostream.h"
+#include "fmt/ranges.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/spoa.hpp"
 #include "tsl/robin_map.h"
@@ -23,14 +25,13 @@ namespace camel {
 
 namespace detail {
 
-static auto constexpr kWinPadding = 13U;
-static auto constexpr kSpikeMergeLen = 420U;
-
 static auto constexpr kAllowedFuzzPercent = 0.01;
 static auto constexpr kSmallWindowPercent = 0.04;
 
-static auto constexpr kBatchSize = (1U << 10U) - 1U;
-static auto constexpr kSnpProximityLimit = 10U;
+static auto constexpr kMinCoverage = 8U;
+
+static auto constexpr kSnpProximityLimit = 20U;
+static auto constexpr kCorrectBatchCap = 1UL << 24UL;
 
 struct FastCovg {
   // mat, del, ins, mis
@@ -88,9 +89,10 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
                          std::vector<Evidence> const& rhs) -> std::uint32_t {
   auto dst = 0U;
   auto i = 0U, j = 0U;
-  for (; i < lhs.size() && j < rhs.size(); ++i, ++j) {
+  for (; i < lhs.size() && j < rhs.size();) {
     if (lhs[i].query_pos == rhs[j].query_pos) {
       dst += lhs[i].base != rhs[j].base;
+      ++i, ++j;
     } else if (lhs[i].query_pos < rhs[j].query_pos) {
       ++dst, ++i;
     } else {
@@ -102,19 +104,43 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
   return dst;
 }
 
+static auto MisSupportScore(std::vector<Evidence> const& backbone,
+                            std::vector<Evidence> const& support)
+    -> std::uint32_t {
+  auto dst = 0U;
+  auto i = 0U, j = 0U;
+
+  for (; i < backbone.size() && j < support.size();) {
+    if (backbone[i].query_pos == support[j].query_pos) {
+      dst += backbone[i].base != support[j].base;
+      ++i, ++j;
+    } else if (backbone[i].query_pos < support[j].query_pos) {
+      ++i;
+    } else {
+      ++j;
+    }
+  }
+
+  return dst;
+}
+
 [[nodiscard]] static inline auto IntervalLen(Interval const& intv)
     -> std::uint32_t {
   return intv.end_idx - intv.start_idx;
 }
 
 [[nodiscard]] static auto FindOverlapsAndFilterReads(
-    State& state, MapCfg const map_cfg,
+    State& state, MapCfg const map_cfg, std::uint32_t const kWindowLen,
+    std::uint32_t const kMaxCoverage,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> tsl::robin_map<std::uint32_t, ReadOverlapsPair> {
   auto reads_overlaps = std::vector<ReadOverlapsPair>();
   reads_overlaps.reserve(src_reads.size());
 
-  auto overlaps = camel::FindConfidentOverlaps(state, map_cfg, src_reads);
+  // auto overlaps = camel::FindConfidentOverlaps(state, map_cfg, kWindowLen,
+  //                                              kMaxCoverage, src_reads);
+  auto overlaps = camel::FindOverlaps(state, map_cfg, src_reads);
+
   auto timer = biosoup::Timer();
 
   timer.Start();
@@ -368,7 +394,8 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
 [[nodiscard]] static auto FindIntervals(
     std::unique_ptr<biosoup::NucleicAcid> const& query_read,
     std::vector<OverlapEdlibAlignment> const& overlap_alignments,
-    std::uint16_t kEstimatedCovg, double const kMatchRatio)
+    std::uint32_t const kSpikeMergeLen, std::uint32_t const kWinPadding,
+    std::uint16_t const kEstimatedCovg, double const kMatchRatio)
     -> std::vector<CorrectionInterval> {
   if (query_read->inflated_len < 1.2 * kSpikeMergeLen) {
     return {};
@@ -377,6 +404,7 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
   auto dst = std::vector<CorrectionInterval>();
   auto coverage = std::vector<FastCovg>(query_read->inflated_len);
 
+  // taken from long shot
   auto const kSnpCutOff = static_cast<std::uint16_t>(
       kEstimatedCovg + std::round(5 * std::sqrt(kEstimatedCovg)));
 
@@ -409,21 +437,26 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
       auto const kCovgSum =
           std::accumulate(covg.signal.cbegin(), covg.signal.cend(), 0U,
                           std::plus<std::uint32_t>());
-      if (covg.signal[0] < std::round(kMatchRatio * kCovgSum) ||
-          covg.signal[0] < std::round(kMatchRatio * kEstimatedCovg)) {
-        spikes.push_back(pos);
-      }
 
-      if (covg.signal[0] <= kCovgSum * 0.60 &&
-          kCovgSum * 0.2 <= covg.signal[3] &&
-          covg.signal[3] <= 0.8 * kCovgSum && covg.signal[3] < kSnpCutOff) {
-        snp_candidates.emplace_back(pos, true);
-      }
+      if (kCovgSum > 0U) {
+        if (covg.signal[0] < std::round(kMatchRatio * kCovgSum) ||
+            covg.signal[0] < std::round(kMatchRatio * kEstimatedCovg)) {
+          spikes.push_back(pos);
+        }
 
-      if ((kCovgSum * 0.80 <= covg.signal[1] && covg.signal[1] <= kSnpCutOff) ||
+        if (covg.signal[0] <= kCovgSum * 0.75 &&
+            kCovgSum * 0.25 <= covg.signal[0] &&
+            kCovgSum * 0.20 <= covg.signal[3] &&
+            covg.signal[3] <= 0.8 * kCovgSum && covg.signal[3] < kSnpCutOff) {
+          snp_candidates.emplace_back(pos, true);
+        }
 
-          (kCovgSum * 0.80 <= covg.signal[2] && covg.signal[2] <= kSnpCutOff)) {
-        indel_candidates.push_back(pos);
+        if ((kCovgSum * 0.80 <= covg.signal[1] &&
+             covg.signal[1] <= kSnpCutOff) ||
+            (kCovgSum * 0.80 <= covg.signal[2] &&
+             covg.signal[2] <= kSnpCutOff)) {
+          indel_candidates.push_back(pos);
+        }
       }
     }
 
@@ -520,6 +553,8 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
       snp_candidates.erase(erase_first, snp_candidates.end());
     }
 
+    // fmt::print(stderr, "[{}] : {}", query_read->id, snp_candidates);
+
     {
       auto i = 0U;
       auto j = 0U;
@@ -559,14 +594,15 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
     State& state,
     std::unique_ptr<spoa::AlignmentEngine> const& alignment_engine,
     tsl::robin_map<std::uint32_t, ReadOverlapsPair> const& reads_overlaps,
-    std::uint32_t const query_id, std::uint16_t const kEstimatedCovg,
+    std::uint32_t const query_id, std::uint32_t const kWindowLen,
+    std::uint32_t const kWinPadding, std::uint16_t const kEstimatedCovg,
     double const kMatchRatio) -> std::unique_ptr<biosoup::NucleicAcid> {
   auto dst = std::unique_ptr<biosoup::NucleicAcid>();
   auto const ovlps_aligned = FindAlignments(state, reads_overlaps, query_id);
 
   auto const& query_read = reads_overlaps.at(query_id).read;
-  auto intervals =
-      FindIntervals(query_read, ovlps_aligned, kEstimatedCovg, kMatchRatio);
+  auto intervals = FindIntervals(query_read, ovlps_aligned, kWindowLen,
+                                 kWinPadding, kEstimatedCovg, kMatchRatio);
 
   if (intervals.empty()) {
     // maybe think of a better way to do this
@@ -589,10 +625,10 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
           return graph;
         });
 
-    auto const align_to_graph = [&intervals, &graphs, &alignment_engine](
-                                    std::uint32_t const interval_idx,
-                                    Interval local_interval,
-                                    std::string const& target_substr) -> void {
+    auto const align_to_graph =
+        [&intervals, &graphs, &alignment_engine, kWinPadding](
+            std::uint32_t const interval_idx, Interval local_interval,
+            std::string const& target_substr) -> void {
       auto const kIntervalLen = IntervalLen(intervals[interval_idx]);
       if (kIntervalLen > kWinPadding &&
           IntervalLen(local_interval) < kIntervalLen * kSmallWindowPercent) {
@@ -730,56 +766,99 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
       }
     }
 
+    // if (query_id < 1000) {
+    //   auto logstrm = std::fstream(
+    //       state.log_path / fmt::format("read_{:03d}_intervals.txt",
+    //       query_id), std::ios::out | std::ios::trunc);
+
+    //   for (auto const& interval : intervals) {
+    //     if (interval.snp_evidence.size() > 0) {
+    //       fmt::print(stderr, "[de]{}, {}\n", interval.snp_evidence.size(),
+    //                  interval.indel_signals.size());
+    //     }
+
+    //     for (auto const& snp_e : interval.snp_evidence) {
+    //       fmt::print(logstrm, "({}, {:04d})\t", snp_e.base, snp_e.query_pos);
+    //     }
+
+    //     fmt::print(logstrm, "\n");
+
+    //     for (auto const& segment : interval.segments) {
+    //       for (auto i = 0U, j = 0U; i < interval.snp_evidence.size(); ++i) {
+    //         if (j < segment.snp_evidence.size() &&
+    //             interval.snp_evidence[i].query_pos ==
+    //                 segment.snp_evidence[j].query_pos) {
+    //           fmt::print(logstrm, "({}, {:04d})\t",
+    //                      segment.snp_evidence[j].base,
+    //                      segment.snp_evidence[j].query_pos);
+
+    //           ++j;
+    //         } else {
+    //           fmt::print(logstrm, "({}, {:04d})\t", '-',
+    //                      interval.snp_evidence[i].query_pos);
+    //         }
+    //       }
+    //       fmt::print(logstrm, "\n");
+    //     }
+    //   }
+    //   fmt::print(logstrm, "\n");
+    // }
+
     for (auto idx = 0U; idx < intervals.size(); ++idx) {
       for (auto& segment : intervals[idx].segments) {
         segment.diff_score =
-            EvidenceDiff(segment.snp_evidence, intervals[idx].snp_evidence);
+            MisSupportScore(intervals[idx].snp_evidence, segment.snp_evidence);
       }
 
-      {
-        auto const pivot = std::next(intervals[idx].segments.begin(),
-                                     intervals[idx].segments.size() * 0.5);
-        if (pivot != intervals[idx].segments.begin() &&
-            pivot != intervals[idx].segments.end()) {
-          std::partial_sort(intervals[idx].segments.begin(), pivot,
-                            intervals[idx].segments.end(),
-                            [](Segment const& lhs, Segment const& rhs) -> bool {
-                              return lhs.diff_score < rhs.diff_score;
-                            });
+      // if (intervals[idx].snp_evidence.size() > 0) {
+      //   auto const kStartSz = intervals[idx].segments.size();
+      //   intervals[idx].segments.erase(
+      //       std::remove_if(intervals[idx].segments.begin(),
+      //                      intervals[idx].segments.end(),
+      //                      [](Segment const& segment) -> bool {
+      //                        return segment.diff_score > 0;
+      //                      }),
+      //       intervals[idx].segments.end());
 
-          intervals[idx].segments.erase(pivot, intervals[idx].segments.end());
+      //   auto const kEndSz = intervals[idx].segments.size();
+      //   fmt::print("[de] {} - {} = {}\n", kStartSz, kEndSz, kStartSz - kEndSz);
+      // }
+
+      // auto const& ref_indles =
+      // intervals[idx].segments.front().indel_evidence; for (auto& segment :
+      // intervals[idx].segments) {
+      //   segment.diff_score =
+      //       EvidenceDiff(segment.snp_evidence, intervals[idx].snp_evidence) +
+      //       MisSupportScore(ref_indles, segment.indel_evidence);
+      // }
+
+      // auto pivot = intervals[idx].segments.end();
+
+      // if (intervals[idx].segments.size() / 1.8 >= kMinCoverage) {
+      //   pivot = std::next(intervals[idx].segments.begin(),
+      //                     intervals[idx].segments.size() / 1.8);
+
+      // } else if (intervals[idx].segments.size() > kMinCoverage) {
+      //   pivot = std::next(intervals[idx].segments.begin(), kMinCoverage);
+      // }
+
+      // if (pivot != intervals[idx].segments.end()) {
+      //   pivot = std::next(pivot);
+      //   intervals[idx].segments.erase(pivot, intervals[idx].segments.end());
+      // }
+
+      if (intervals[idx].segments.size() >= kMinCoverage) {
+        for (auto i = 0U; i < intervals[idx].segments.size(); ++i) {
+          auto const local_interval = intervals[idx].segments[i].query_interval;
+          auto const target_interval =
+              intervals[idx].segments[i].target_interval;
+          auto const target_substr =
+              reads_overlaps.at(intervals[idx].segments[i].target_id)
+                  .read->InflateData(target_interval.start_idx,
+                                     IntervalLen(target_interval));
+
+          align_to_graph(idx, local_interval, target_substr);
         }
-      }
-
-      if (!intervals[idx].segments.empty()) {
-        auto const& ref_indles = intervals[idx].segments.front().indel_evidence;
-        for (auto& segment : intervals[idx].segments) {
-          segment.diff_score = EvidenceDiff(segment.indel_evidence, ref_indles);
-        }
-
-        auto const pivot = std::next(intervals[idx].segments.begin(),
-                                     intervals[idx].segments.size() * 0.7);
-        if (pivot != intervals[idx].segments.begin() &&
-            pivot != intervals[idx].segments.end()) {
-          std::partial_sort(intervals[idx].segments.begin(), pivot,
-                            intervals[idx].segments.end(),
-                            [](Segment const& lhs, Segment const& rhs) -> bool {
-                              return lhs.diff_score < rhs.diff_score;
-                            });
-
-          intervals[idx].segments.erase(pivot, intervals[idx].segments.end());
-        }
-      }
-
-      for (auto i = 0U; i < intervals[idx].segments.size(); ++i) {
-        auto const local_interval = intervals[idx].segments[i].query_interval;
-        auto const target_interval = intervals[idx].segments[i].target_interval;
-        auto const target_substr =
-            reads_overlaps.at(intervals[idx].segments[i].target_id)
-                .read->InflateData(target_interval.start_idx,
-                                   IntervalLen(target_interval));
-
-        align_to_graph(idx, local_interval, target_substr);
       }
     }
 
@@ -813,7 +892,7 @@ static auto EvidenceDiff(std::vector<Evidence> const& lhs,
 }  // namespace detail
 
 auto SnpErrorCorrect(
-    State& state, MapCfg const map_cfg, PolishConfig const polish_cfg,
+    State& state, MapCfg const map_cfg, CorrectConfig const correct_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
@@ -821,8 +900,9 @@ auto SnpErrorCorrect(
   auto timer = biosoup::Timer();
 
   timer.Start();
-  auto reads_overlaps =
-      detail::FindOverlapsAndFilterReads(state, map_cfg, std::move(src_reads));
+  auto reads_overlaps = detail::FindOverlapsAndFilterReads(
+      state, map_cfg, correct_cfg.correct_window, correct_cfg.depth,
+      std::move(src_reads));
   fmt::print(stderr,
              "[camel::SnpErrorCorrect]({:12.3f}) tied reads with overlaps\n",
              timer.Stop());
@@ -842,8 +922,8 @@ auto SnpErrorCorrect(
 
     for (auto const& [thread_id, _] : state.thread_pool->thread_map()) {
       alignment_engines[thread_id] = spoa::AlignmentEngine::Create(
-          spoa::AlignmentType::kNW, polish_cfg.poa_cfg.match,
-          polish_cfg.poa_cfg.mismatch, polish_cfg.poa_cfg.gap);
+          spoa::AlignmentType::kNW, correct_cfg.poa_cfg.match,
+          correct_cfg.poa_cfg.mismatch, correct_cfg.poa_cfg.gap);
     }
 
     auto const find_batch_last =
@@ -862,11 +942,12 @@ auto SnpErrorCorrect(
     auto correct_futures =
         std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
 
-    auto const correct_async = [&state, &reads_overlaps, &alignment_engines,
+    auto const correct_async = [&state, &map_cfg, &correct_cfg, &reads_overlaps,
+                                &alignment_engines,
                                 kEstimatedCovg](std::uint32_t const query_id)
         -> std::future<std::unique_ptr<biosoup::NucleicAcid>> {
       return state.thread_pool->Submit(
-          [&alignment_engines, kEstimatedCovg](
+          [&map_cfg, &correct_cfg, &alignment_engines, kEstimatedCovg](
               State& state,
               tsl::robin_map<std::uint32_t, ReadOverlapsPair> const&
                   reads_overlaps,
@@ -875,24 +956,26 @@ auto SnpErrorCorrect(
             auto const& alignment_engine =
                 alignment_engines[std::this_thread::get_id()];
             return detail::CorrectRead(state, alignment_engine, reads_overlaps,
-                                       query_idx, kEstimatedCovg, 0.95);
+                                       query_idx, correct_cfg.correct_window,
+                                       map_cfg.kmer_len, kEstimatedCovg, 0.95);
           },
-          std::ref(state), std::cref(reads_overlaps), query_id
-
-      );
+          std::ref(state), std::cref(reads_overlaps), query_id);
     };
 
-    auto const kBatchSz =
-        state.thread_pool->num_threads() * state.thread_pool->num_threads();
-
-    correct_futures.reserve(kBatchSz);
     for (auto first = reads_overlaps.cbegin();
          first != reads_overlaps.cend();) {
       auto last = first;
-      for (auto i = 0U; i < kBatchSz && last != reads_overlaps.cend(); ++i) {
-        ++last;
+
+      {
+        auto batch_sz = 0U;
+        for (auto batch_sz = 0U; batch_sz < detail::kCorrectBatchCap &&
+                                 last != reads_overlaps.cend();
+             ++last) {
+          batch_sz += last.value().read->inflated_len;
+        }
       }
 
+      correct_futures.reserve(std::distance(first, last));
       for (; first != last; ++first) {
         correct_futures.emplace_back(correct_async(first.key()));
       }
