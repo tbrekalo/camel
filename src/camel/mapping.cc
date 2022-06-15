@@ -20,8 +20,8 @@ namespace detail {
 static constexpr auto kMinimizeBatchCap = 1UL << 34UL;
 static constexpr auto kMapBatchCap = 1UL << 26UL;
 
-static constexpr auto kExpectedCoverage = 16U;
-static constexpr auto kWindowLen = 420U;
+static constexpr auto kDefaultExpectedCoverage = 32U;
+static constexpr auto kDefaultWindowLen = 500U;
 
 static auto FindBatchLast(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator first,
@@ -36,19 +36,17 @@ static auto FindBatchLast(
 }
 
 static auto SweepOverlaps(std::vector<biosoup::Overlap>& overlaps,
-                          std::uint32_t const kReadLen) -> std::uint64_t {
+                          std::uint32_t const kReadLen,
+                          std::uint32_t const kWindowLen,
+                          std::uint32_t const kExpectedCoverage)
+    -> std::uint64_t {
   auto windows =
       std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>>();
-  windows.reserve(std::round(1.0 * kReadLen / kWindowLen));
+  windows.resize(std::round(1.0 * kReadLen / kWindowLen));
 
-  std::generate_n(std::back_inserter(windows), windows.capacity(),
-                  []() -> std::vector<std::pair<std::uint32_t, std::uint32_t>> {
-                    auto dst =
-                        std::vector<std::pair<std::uint32_t, std::uint32_t>>();
-                    dst.reserve(kExpectedCoverage + 1U);
-
-                    return dst;
-                  });
+  for (auto& window : windows) {
+    windows.reserve(kExpectedCoverage + 1U);
+  }
 
   for (auto ovlp_id = 0U; ovlp_id < overlaps.size(); ++ovlp_id) {
     auto first_idx = overlaps[ovlp_id].lhs_begin / kWindowLen;
@@ -320,6 +318,8 @@ auto FindOverlaps(
 
 auto FindConfidentOverlaps(
     State& state, MapCfg const map_cfg,
+    std::uint32_t const kWindowLen,
+    std::uint32_t const kMaxCoverage,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& src_reads)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto overlaps = std::vector<std::vector<biosoup::Overlap>>(src_reads.size());
@@ -368,8 +368,8 @@ auto FindConfidentOverlaps(
         timer.Stop(), std::distance(src_reads.begin(), minimize_last),
         src_reads.size());
 
+    timer.Start();
     for (auto map_first = src_reads.begin(); map_first != minimize_last;) {
-      timer.Start();
       auto const map_last =
           detail::FindBatchLast(map_first, minimize_last, detail::kMapBatchCap);
 
@@ -385,25 +385,18 @@ auto FindConfidentOverlaps(
 
       map_futures.clear();
 
-      fmt::print(
-          stderr,
-          "\r[camel::FindConfidentOverlaps]({:12.3f}) mapped {} / {} reads",
-          timer.Stop(), std::distance(src_reads.begin(), map_last),
-          std::distance(src_reads.begin(), minimize_last));
-
       {
-        timer.Start();
         auto first = (*minimize_first)->id < (*map_first)->id ? minimize_first
                                                               : map_first;
         auto last = minimize_last;
 
         for (; first != last; ++first) {
-          if (overlaps[(*first)->id].size() > 420 * 4) {
+          if (overlaps[(*first)->id].size() > 420 * 4) { // NOTE: this might need re adjusting
             sweep_futures.emplace_back(state.thread_pool->Submit(
                 [&src_reads,
                  &overlaps](std::uint32_t const id) -> std::uint64_t {
-                  return detail::SweepOverlaps(overlaps[id],
-                                               src_reads[id]->inflated_len);
+                  return detail::SweepOverlaps(
+                      overlaps[id], src_reads[id]->inflated_len, 320, 40);
                 },
                 (*first)->id));
           }
@@ -420,12 +413,18 @@ auto FindConfidentOverlaps(
         //     stderr,
         //     "\r[camel::FindConfidentOverlaps]({:12.3f}) swept {} low quality
         //     " "overlaps", timer.Stop(), n_discards);
-        timer.Stop();
       }
+
+      fmt::print(
+          stderr,
+          "\r[camel::FindConfidentOverlaps]({:12.3f}) mapped {} / {} reads",
+          timer.Lap(), std::distance(src_reads.begin(), map_last),
+          std::distance(src_reads.begin(), minimize_last));
 
       map_first = map_last;
     }
 
+    timer.Stop();
     fmt::print(stderr, "\n");
     minimize_first = minimize_last;
   }
