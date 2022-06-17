@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.17)
-project(camel VERSION 0.6.0
+project(camel VERSION 0.8.0
               LANGUAGES CXX
-              DESCRIPTION "Snp detection tool")
+              DESCRIPTION "Read polishing tool")
 
 # test if camel is main project
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -40,19 +40,6 @@ option(CAMEL_BUILD_PYTHON "Build camel python bindings" OFF)
 option(CAMEL_BUILD_EXE "Build camel executable" OFF)
 option(CAMEL_DEVEL_OPTS "Enable options used for development" OFF)
 
-if (SKBUILD)
-  set(CAMEL_BUILD_PYTHON ON)
-endif ()
-
-if (CAMEL_PACK AND SKBUILD)
-  message(FATAL_ERROR "CAMEL_PACK and CAMEL_BUILD_PYTHON mutually exclusive")
-  return()
-endif ()
-
-if (CAMEL_BUILD_PYTHON)
-  set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
-endif ()
-
 if (NOT DEFINED CMAKE_CXX_VISIBILITY_PRESET AND
     NOT DEFINED CMAKE_VISIBILITY_INLINES_HIDDEN AND NOT CAMEL_MAIN_PROJECT)
   set(CMAKE_CXX_VISIBILITY_PRESET hidden)
@@ -72,10 +59,9 @@ conan_cmake_configure(
     tsl-robin-map/1.0.1
     zstd/1.5.2
   GENERATORS 
-    cmake_find_package_multi)
+    cmake_find_package)
 
 conan_cmake_autodetect(settings)
-
 conan_cmake_install(PATH_OR_REFERENCE .
                     BUILD missing
                     REMOTE conancenter
@@ -123,7 +109,6 @@ set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/serialization.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/coverage.cc
   ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc
   ${PROJECT_SOURCE_DIR}/src/camel/io.cc
   ${PROJECT_SOURCE_DIR}/src/camel/state.cc)
@@ -169,37 +154,4 @@ if (CAMEL_BUILD_EXE)
       camel cxxopts::cxxopts 
       jemalloc::jemalloc 
       fmt::fmt)
-endif ()
-
-if (CAMEL_BUILD_PYTHON)
-  if (SKBUILD)
-    message(STATUS "Python_VERSION ${PYTHON_VERSION_STRING}")
-    message(STATUS "Python_EXECUTABLE ${PYTHON_EXECUTABLE}")
-    message(STATUS "Python_INCLUDE_DIR ${PYTHON_INCLUDE_DIR}")
-    message(STATUS "Python_LIBRARIES ${PYTHON_LIBRARY}")
-    set(Python_VERSION "${PYTHON_VERSION_STRING}")
-    set(Python_EXECUTABLE "${PYTHON_EXECUTABLE}")
-    set(Python_INCLUDE_DIR "${PYTHON_INCLUDE_DIR}")
-    set(Python_LIBRARIES "${PYTHON_LIBRARY}")
-  endif ()
-
-  find_package(Python COMPONENTS Interpreter Development REQUIRED)
-  FetchContent_Declare(
-    nanobind
-    GIT_REPOSITORY https://github.com/wjakob/nanobind.git
-    GIT_TAG master)
-
-  FetchContent_MakeAvailable(nanobind)
-  nanobind_add_module(camelpy_ext NB_STATIC ${PROJECT_SOURCE_DIR}/src/bind.cc) 
-  target_link_libraries(camelpy_ext PRIVATE camel thread_pool)
-
-  if (SKBUILD)
-    install(TARGETS camelpy_ext LIBRARY DESTINATION .)
-  endif ()
-elseif (CAMEL_PACK) # include packing for pure c++ install
-  add_subdirectory(${PROJECT_SOURCE_DIR}/packaging)
-endif ()
-
-if (CAMEL_BUILD_TESTS)
-  include(${PROJECT_SOURCE_DIR}/test/CamelTest.cmake)
 endif ()

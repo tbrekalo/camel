@@ -35,15 +35,6 @@ CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>>;
 
-/**
- * @brief Find high quality overlaps between reads
- */
-CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
-    State& state, MapCfg const map_cfg, std::uint32_t const kWindowLen,
-    std::uint32_t const kMaxCoverage,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<std::vector<biosoup::Overlap>>;
-
 }  // namespace camel
 
 #endif /* CAMEL_MAPPING_H_ */
