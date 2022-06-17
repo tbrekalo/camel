@@ -11,7 +11,6 @@
 
 #include "biosoup/timer.hpp"
 #include "camel/correct.h"
-#include "camel/coverage.h"
 #include "camel/detail/overlap.h"
 #include "camel/io.h"
 #include "camel/mapping.h"

@@ -219,7 +219,7 @@ auto Load(Buff& buff, std::vector<T>& dst)
 }
 
 auto CompressToFile(std::vector<std::byte> const& bytes,
-                  std::filesystem::path const& path) -> void;
+                    std::filesystem::path const& path) -> void;
 
 [[nodiscard]] auto DecompressFromFile(std::filesystem::path const& path)
     -> std::vector<std::byte>;
