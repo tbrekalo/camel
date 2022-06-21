@@ -12,7 +12,6 @@ namespace camel::detail {
  * @brief specifies overlap types
  */
 enum class OverlapType : std::uint8_t {
-  kInvalid,
   kUnclassified,
 
   kInternal,      ///< overlap has a deep location in one of the sequnces
