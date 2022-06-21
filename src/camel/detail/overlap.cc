@@ -21,12 +21,6 @@ auto DetermineOverlapType(biosoup::Overlap const ovlp,
       std::min(lhs_begin, rhs_begin) +
       std::max(lhs_seq_size - lhs_end, rhs_seq_size - rhs_end);
 
-  if ((1.0 * ovlp_size) / (ovlp_size + overhang) <= 0.1 ||
-      ((lhs_ovlp_len - rhs_ovlp_len) * (lhs_ovlp_len - rhs_ovlp_len) >
-       (lhs_ovlp_len / 15) * (rhs_ovlp_len / 15))) {
-    return OverlapType::kInvalid;
-  }
-
   /*
     NOTE: order of overlap type evaluation is important
     if we do not check for internal overlaps

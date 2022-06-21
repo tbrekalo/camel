@@ -92,6 +92,10 @@ auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
     -> void {
+  if (seqs.empty()) {
+    return;
+  }
+
   auto const find_batch_last =
       [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
              first,

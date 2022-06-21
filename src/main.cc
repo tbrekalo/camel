@@ -50,9 +50,7 @@ auto main(int argc, char** argv) -> int {
     ("g,gap", "gap penalty (must be nagative)",
       cxxopts::value<std::int8_t>()->default_value("-4"))
     ("c,correct_window", "targeted correction window len",
-      cxxopts::value<std::uint32_t>()->default_value("320"))
-    ("d,coverage_depth", "targeted maximum coverage depth",
-      cxxopts::value<std::uint32_t>()->default_value("16"));
+      cxxopts::value<std::uint32_t>()->default_value("320"));
   options.add_options("utility arguments")
     ("t,threads", "number of threads avalable for execution",
             cxxopts::value<std::uint32_t>())
@@ -116,7 +114,6 @@ auto main(int argc, char** argv) -> int {
 
     auto const correct_cfg = camel::CorrectConfig{
         .poa_cfg = camel::POAConfig{},
-        .depth = result["coverage_depth"].as<std::uint32_t>(),
         .correct_window = result["correct_window"].as<std::uint32_t>()};
 
     timer.Start();
