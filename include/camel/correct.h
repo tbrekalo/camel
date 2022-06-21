@@ -20,7 +20,6 @@ CAMEL_EXPORT struct POAConfig {
 
 CAMEL_EXPORT struct CorrectConfig { 
   POAConfig poa_cfg; 
-  std::uint32_t depth;
   std::uint32_t correct_window;
 };
 
