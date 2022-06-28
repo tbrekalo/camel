@@ -23,7 +23,7 @@ CAMEL_EXPORT struct CorrectConfig {
   std::uint32_t correct_window;
 };
 
-CAMEL_EXPORT [[nodiscard]] auto SnpErrorCorrect(
+CAMEL_EXPORT [[nodiscard]] auto ErrorCorrect(
     State& state, MapCfg const map_cfg, CorrectConfig const correct_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
