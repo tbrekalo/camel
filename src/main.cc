@@ -123,7 +123,7 @@ auto main(int argc, char** argv) -> int {
 
     timer.Start();
     auto corrected_reads =
-        camel::SnpErrorCorrect(state, map_cfg, correct_cfg, std::move(reads));
+        camel::ErrorCorrect(state, map_cfg, correct_cfg, std::move(reads));
     timer.Stop();
 
     camel::StoreSequences(state, corrected_reads, out_path, 1U << 28U);

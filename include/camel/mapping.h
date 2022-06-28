@@ -25,17 +25,7 @@ CAMEL_EXPORT struct MapCfg {
   double filter_p = 0.001;
 };
 
-/**
- * @brief Find all overlaps between reads
- *
- * @returns vector of vectors of reads that map to that read
- */
 CAMEL_EXPORT [[nodiscard]] auto FindOverlaps(
-    State& state, MapCfg const map_cfg,
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
-    -> std::vector<std::vector<biosoup::Overlap>>;
-
-CAMEL_EXPORT [[nodiscard]] auto FindConfidentOverlaps(
     State& state, MapCfg const map_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
     -> std::vector<std::vector<biosoup::Overlap>>;
