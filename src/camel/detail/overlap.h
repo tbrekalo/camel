@@ -86,6 +86,8 @@ auto OverlapLength(biosoup::Overlap const& ovlp) -> std::uint32_t;
  * @brief calculate overlap score
  */
 
+ auto OverlapError(biosoup::Overlap const& ovlp) -> double;
+
 auto OverlapScore(biosoup::Overlap const& ovlp) -> double;
 
 }  // namespace camel::detail

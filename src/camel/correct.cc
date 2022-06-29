@@ -17,6 +17,7 @@
 #include "fmt/core.h"
 #include "fmt/ostream.h"
 #include "fmt/ranges.h"
+#include "ram/minimizer_engine.hpp"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/spoa.hpp"
 #include "tsl/robin_map.h"
@@ -235,7 +236,7 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
         auto len = 0U;
         while (i < edlib_res.alignmentLength && edlib_res.alignment[i] == 2) {
           val = len < kMaxInsLen
-                    ? ((val << 2 |
+                    ? (((val << 2) |
                         biosoup::kNucleotideCoder[rhs_substr[rhs_pos]]))
                     : val;
           len += (len < kMaxInsLen);
@@ -303,8 +304,8 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
     auto [val, len] = insertions[pos].front().first;
     auto dst = std::string(len, '\0');
 
-    for (auto i = 0; i < len; ++i) {
-      dst[i] = biosoup::kNucleotideDecoder[val & 3U];
+    for (auto i = 0U; i < len; ++i) {
+      dst[len - (i + 1U)] = biosoup::kNucleotideDecoder[val & 3U];
       val >>= 2U;
     }
 
@@ -368,7 +369,7 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
     }
 
     if (covg[i].signals[CoverageSignals::kInsIdx] > kBackboneSignal &&
-        covg[i].signals[CoverageSignals::kInsIdx] > 0.75 * kSigSum) {
+        covg[i].signals[CoverageSignals::kInsIdx] > 0.66 * kSigSum) {
       auto const kInsStr = decode_insertion(i);
       corrected.insert(corrected.end(), kInsStr.cbegin(), kInsStr.cend());
     }
@@ -383,8 +384,8 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
                   CorrectConfig const correct_cfg,
                   std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
+  auto corrected_targets = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-
   auto timer = biosoup::Timer();
 
   timer.Start();
@@ -462,7 +463,7 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
 
     timer.Start();
     for (auto i = 0U; i < consensus_futures.size(); ++i) {
-      dst.push_back(consensus_futures[i].get());
+      corrected_targets.push_back(consensus_futures[i].get());
       if (i > 0U && (i & 127U) == 0U || i + 1U == kNTargets) {
         fmt::print(stderr,
                    "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
@@ -473,6 +474,116 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
 
     timer.Stop();
     fmt::print(stderr, "\n");
+  }
+
+  {
+    timer.Start();
+    for (auto i = 0U; i < corrected_targets.size(); ++i) {
+      corrected_targets[i]->id = i;
+    }
+
+    auto queries = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
+
+    queries.reserve(kNContained);
+    std::copy_if(
+        std::make_move_iterator(src_reads.begin()),
+        std::make_move_iterator(src_reads.end()), std::back_inserter(queries),
+        [&ovlps](std::unique_ptr<biosoup::NucleicAcid> const& acid) -> bool {
+          return ovlps[acid->id].empty();
+        });
+
+    for (auto i = 0U; i < queries.size(); ++i) {
+      queries[i]->id = kNTargets + i;
+    }
+
+    fmt::print(
+        stderr,
+        "[camel::ErrorCorrect]({:12.3f}) prepared reads for reconstruction\n",
+        timer.Stop());
+
+    timer.Start();
+    auto minimizer_engine = ram::MinimizerEngine(
+        state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
+
+    minimizer_engine.Minimize(corrected_targets.cbegin(),
+                              corrected_targets.cend());
+    minimizer_engine.Filter(map_cfg.filter_p);
+
+    fmt::print(
+        stderr,
+        "[camel::ErrorCorrect]({:12.3f}) minimized {} corrected targets\n",
+        timer.Stop(), corrected_targets.size());
+
+    timer.Start();
+    auto reconstruct_futures = std::vector<std::future<void>>();
+    for (auto& query : queries) {
+      reconstruct_futures.emplace_back(state.thread_pool->Submit(
+          [&corrected_targets, &minimizer_engine](
+              std::unique_ptr<biosoup::NucleicAcid>& acid) -> void {
+            auto ovlps = minimizer_engine.Map(acid, true, true, true);
+            ovlps.erase(
+                std::remove_if(
+                    ovlps.begin(), ovlps.end(),
+                    [&corrected_targets,
+                     &acid](biosoup::Overlap const& ovlp) -> bool {
+                      auto const kOvlpType = detail::DetermineOverlapType(
+                          ovlp, corrected_targets[ovlp.rhs_id]->inflated_len,
+                          acid->inflated_len);
+                      return detail::OverlapError(ovlp) > 0.3 ||
+                             kOvlpType != detail::OverlapType::kLhsContained;
+                    }),
+                ovlps.end());
+
+            if (!ovlps.empty()) {
+              auto const mx_ovlp = std::max_element(
+                  ovlps.begin(), ovlps.end(),
+                  [](biosoup::Overlap const& a,
+                     biosoup::Overlap const& b) -> bool {
+                    return detail::OverlapLength(a) < detail::OverlapLength(b);
+                  });
+
+              auto target_extract =
+                  corrected_targets[mx_ovlp->rhs_id]->InflateData(
+                      mx_ovlp->rhs_begin,
+                      mx_ovlp->rhs_end - mx_ovlp->rhs_begin);
+
+              if (!(mx_ovlp->strand)) {
+                auto rc_buff = biosoup::NucleicAcid("", target_extract);
+                rc_buff.ReverseAndComplement();
+
+                target_extract = rc_buff.InflateData();
+              }
+
+              auto acid_corrected = std::make_unique<biosoup::NucleicAcid>(
+                  acid->name, target_extract);
+
+              acid = std::move(acid_corrected);
+            } else {
+              acid->block_quality.clear();  // TODO: cheeky
+            }
+          },
+          std::ref(query)));
+    }
+
+    for (auto i = 0U; i < reconstruct_futures.size(); ++i) {
+      reconstruct_futures[i].wait();
+      if ((i & 1023) == 0U || i + 1U == reconstruct_futures.size()) {
+        fmt::print(
+            stderr,
+            "\r[camel::ErrorCorrect]({:12.3f}) reconstructed {} / {} reads",
+            timer.Lap(), i + 1U, reconstruct_futures.size());
+      }
+    }
+
+    timer.Stop();
+    fmt::print(stderr, "\n");
+
+    src_reads.clear();
+
+    dst.reserve(kNTargets + kNContained);
+    std::move(corrected_targets.begin(), corrected_targets.end(),
+              std::back_inserter(dst));
+    std::move(queries.begin(), queries.end(), std::back_inserter(dst));
   }
 
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n", timer.elapsed_time());
