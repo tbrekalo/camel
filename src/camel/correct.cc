@@ -25,11 +25,13 @@ namespace camel {
 
 namespace detail {
 
-static auto constexpr kAllowedFuzzPercent = 0.01;
-static auto constexpr kSmallWindowPercent = 0.04;
-
 static auto constexpr kShrinkShift = 3U;
 static auto constexpr kMaxInsLen = 32U;
+
+struct Insertion {
+  std::uint64_t val;
+  std::uint8_t len;
+};
 
 struct MatchInterval {
   std::uint32_t first;
@@ -38,6 +40,7 @@ struct MatchInterval {
 
 struct MismatchSite {
   std::uint32_t pos;
+  std::uint8_t code;
 };
 
 struct DeletinInterval {
@@ -47,12 +50,22 @@ struct DeletinInterval {
 
 struct InsertionSite {
   std::uint32_t pos;
-  std::uint64_t val;
-  std::uint8_t len;
+  Insertion ins;
 };
 
-using AlignmentUnit =
-    std::variant<MatchInterval, DeletinInterval, InsertionSite>;
+struct AlignmentSummary {
+  std::vector<MatchInterval> mats;
+  std::vector<DeletinInterval> dels;
+  std::vector<InsertionSite> inss;
+  std::vector<MismatchSite> miss;
+};
+
+struct CoverageSignals {
+  std::array<std::uint16_t, 6U> signals;
+
+  static constexpr auto kDelIdx = 4U;
+  static constexpr auto kInsIdx = 5U;
+};
 
 class EdlibAlignRAIIRes : public EdlibAlignResult {
   bool engaged = false;
@@ -160,7 +173,7 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
   auto lhs_str = reads[ovlp.lhs_id]->InflateData(ovlp.lhs_begin,
-                                                 ovlp.lhs_end - ovlp.rhs_begin);
+                                                 ovlp.lhs_end - ovlp.lhs_begin);
   auto rhs_str = reads[ovlp.rhs_id]->InflateData(ovlp.rhs_begin,
                                                  ovlp.rhs_end - ovlp.rhs_begin);
 
@@ -171,25 +184,25 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
     rhs_str = acid.InflateData();
   }
 
-  return {lhs_str, rhs_str};
-};
+  return {std::move(lhs_str), std::move(rhs_str)};
+}
 
 [[nodiscard]] static auto AlignStrings(std::string_view lhs_str_view,
                                        std::string_view rhs_str_view)
     -> EdlibAlignRAIIRes {
-  return edlibAlign(lhs_str_view.data(), lhs_str_view.length(),
-                    rhs_str_view.data(), rhs_str_view.length(),
-                    edlibDefaultAlignConfig());
+  return edlibAlign(
+      lhs_str_view.data(), lhs_str_view.length(), rhs_str_view.data(),
+      rhs_str_view.length(),
+      edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
 }
 
 [[nodiscard]] static auto CompressedAlignment(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    biosoup::Overlap const& ovlp) -> std::vector<AlignmentUnit> {
+    biosoup::Overlap const& ovlp) -> AlignmentSummary {
   auto [lhs_substr, rhs_substr] = ExtractSubstrings(reads, ovlp);
   auto const edlib_res = AlignStrings(lhs_substr, rhs_substr);
-  auto dst = std::vector<AlignmentUnit>();
 
-  dst.reserve(edlib_res.alignmentLength / 10U);
+  auto dst = AlignmentSummary{};
 
   auto lhs_pos = ovlp.lhs_begin;
   auto rhs_pos = 0U;
@@ -203,7 +216,7 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
           ++i;
         }
 
-        dst.emplace_back(MatchInterval{.first = start, .last = lhs_pos});
+        dst.mats.push_back(MatchInterval{.first = start, .last = lhs_pos});
         break;
       }
       case 1: {
@@ -213,38 +226,35 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
           ++i;
         }
 
-        dst.emplace_back(DeletinInterval{.first = start, .last = lhs_pos});
+        dst.dels.push_back(DeletinInterval{.first = start, .last = lhs_pos});
         break;
       }
 
       case 2: {
-        auto storage = 0ULL;
+        auto val = 0ULL;
         auto len = 0U;
         while (i < edlib_res.alignmentLength && edlib_res.alignment[i] == 2) {
-          storage = len < kMaxInsLen
-                        ? ((storage << 2 |
-                            biosoup::kNucleotideCoder[rhs_substr[rhs_pos]]))
-                        : storage;
+          val = len < kMaxInsLen
+                    ? ((val << 2 |
+                        biosoup::kNucleotideCoder[rhs_substr[rhs_pos]]))
+                    : val;
           len += (len < kMaxInsLen);
 
           ++rhs_pos;
           ++i;
         }
 
-        dst.emplace_back(InsertionSite{.pos = lhs_pos,
-                                       .val = storage,
-                                       .len = static_cast<std::uint8_t>(len)});
+        dst.inss.push_back(InsertionSite{
+            .pos = lhs_pos,
+            .ins =
+                Insertion{.val = val, .len = static_cast<std::uint8_t>(len)}});
         break;
       }
       case 3: {
-        auto start = lhs_pos;
-        while (i < edlib_res.alignmentLength && edlib_res.alignment[i] == 0) {
-          ++lhs_pos;
-          ++rhs_pos;
-          ++i;
-        }
-
-        dst.emplace_back(DeletinInterval{.first = start, .last = lhs_pos});
+        dst.miss.push_back(MismatchSite{
+            .pos = lhs_pos,
+            .code = biosoup::kNucleotideCoder[rhs_substr[rhs_pos]]});
+        ++i;
         break;
       }
 
@@ -259,9 +269,112 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
 
 [[nodiscard]] static auto GenerateConsensus(
     std::unique_ptr<biosoup::NucleicAcid> const& read,
-    std::vector<std::vector<AlignmentUnit>> const& alignments)
+    std::vector<AlignmentSummary> const& alignments,
+    std::uint32_t const kBackboneSignal)
     -> std::unique_ptr<biosoup::NucleicAcid> {
-  return nullptr;
+  auto covg = std::vector<CoverageSignals>(read->inflated_len);
+
+  for (auto i = 0U; i < read->inflated_len; ++i) {
+    covg[i].signals[read->Code(i)] += kBackboneSignal;
+  }
+
+  auto insertions =
+      tsl::robin_map<std::uint32_t,
+                     std::vector<std::pair<Insertion, std::uint32_t>>>();
+
+  auto const record_insertion = [&insertions](InsertionSite const& is) -> void {
+    auto& ins_vec = insertions[is.pos];
+    auto ins_iter = std::find_if(
+        ins_vec.begin(), ins_vec.end(),
+        [ins = is.ins](
+            std::pair<Insertion, std::uint32_t> const& ins_cnt) -> bool {
+          return ins_cnt.first.val == ins.val && ins_cnt.first.len == ins.len;
+        });
+
+    if (ins_iter != ins_vec.end()) {
+      ++(ins_iter->second);
+    } else {
+      ins_vec.emplace_back(is.ins, 1U);
+    }
+  };
+
+  auto const decode_insertion =
+      [&insertions](std::uint32_t const pos) -> std::string {
+    auto [val, len] = insertions[pos].front().first;
+    auto dst = std::string(len, '\0');
+
+    for (auto i = 0; i < len; ++i) {
+      dst[i] = biosoup::kNucleotideDecoder[val & 3U];
+      val >>= 2U;
+    }
+
+    return dst;
+  };
+
+  for (auto const& summary : alignments) {
+    for (auto const [lo, hi] : summary.mats) {
+      for (auto curr = lo; curr != hi; ++curr) {
+        ++covg[curr].signals[read->Code(curr)];
+      }
+    }
+
+    for (auto const [lo, hi] : summary.dels) {
+      for (auto curr = lo; curr != hi; ++curr) {
+        ++covg[curr].signals[CoverageSignals::kDelIdx];
+      }
+    }
+
+    for (auto const& ins_site : summary.inss) {
+      ++covg[ins_site.pos].signals[CoverageSignals::kInsIdx];
+      record_insertion(ins_site);
+    }
+
+    for (auto const [pos, code] : summary.miss) {
+      ++covg[pos].signals[code];
+    }
+  }
+
+  // filter weak insertions
+  for (auto iter = insertions.begin(); iter != insertions.end(); ++iter) {
+    auto& ins_vec = iter.value();
+    if (auto mx_iter = std::max_element(
+            ins_vec.begin(), ins_vec.end(),
+            [](std::pair<Insertion, std::uint32_t> const& lhs,
+               std::pair<Insertion, std::uint32_t> const& rhs) -> bool {
+              return lhs.second < rhs.second;
+            });
+        mx_iter != ins_vec.begin()) {
+      std::swap(*mx_iter, *ins_vec.begin());
+    }
+
+    ins_vec.resize(1);
+  }
+
+  auto corrected = std::string();
+  corrected.reserve(read->inflated_len + insertions.size() * 5);
+
+  for (auto i = 0U; i < covg.size(); ++i) {
+    auto const kMxIdx =
+        std::distance(covg[i].signals.begin(),
+                      std::max_element(covg[i].signals.begin(),
+                                       covg[i].signals.begin() + 5U));
+
+    auto const kSigSum =
+        std::accumulate(covg[i].signals.cbegin(), covg[i].signals.cbegin() + 5U,
+                        0U, std::plus<std::uint32_t>());
+
+    if (kMxIdx != CoverageSignals::kDelIdx) {
+      corrected.push_back(biosoup::kNucleotideDecoder[kMxIdx]);
+    }
+
+    if (covg[i].signals[CoverageSignals::kInsIdx] > kBackboneSignal &&
+        covg[i].signals[CoverageSignals::kInsIdx] > 0.75 * kSigSum) {
+      auto const kInsStr = decode_insertion(i);
+      corrected.insert(corrected.end(), kInsStr.cbegin(), kInsStr.cend());
+    }
+  }
+
+  return std::make_unique<biosoup::NucleicAcid>(read->name, corrected);
 }
 
 }  // namespace detail
@@ -297,11 +410,9 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
   {
     timer.Start();
     auto alignments =
-        std::vector<std::vector<std::vector<detail::AlignmentUnit>>>(kNTargets);
+        std::vector<std::vector<detail::AlignmentSummary>>(kNTargets);
 
-    auto align_futures =
-        std::vector<std::future<std::vector<detail::AlignmentUnit>>>();
-    align_futures.reserve(kNTargets * 32U);
+    auto align_futures = std::vector<std::future<detail::AlignmentSummary>>();
 
     for (auto i = 0U; i < kNTargets; ++i) {
       auto const target_id = target_ids[i];
@@ -327,23 +438,36 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
       }
 
       consensus_futures.emplace_back(state.thread_pool->Submit(
-          [](std::unique_ptr<biosoup::NucleicAcid>& read,
-             std::vector<std::vector<detail::AlignmentUnit>>& alignments)
+          [kCovgEstimate](std::unique_ptr<biosoup::NucleicAcid> const& read,
+                          std::vector<detail::AlignmentSummary>& alignments)
               -> std::unique_ptr<biosoup::NucleicAcid> {
-            auto dst = detail::GenerateConsensus(read, alignments);
+            auto dst = detail::GenerateConsensus(
+                read, alignments, std::max(2U, kCovgEstimate / 3U));
 
-            read.reset();
             alignments.clear();
-
             return dst;
           },
-          std::ref(src_reads[target_id]), std::ref(alignments[i])));
+          std::cref(src_reads[target_id]), std::ref(alignments[i])));
 
-      if ((i & 127U) == 0 || i + 1U == kNTargets) {
+      if (i > 0 && (i & 127U) == 0U || i + 1U == kNTargets) {
         fmt::print(stderr,
                    "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
                    "alignment futures",
-                   timer.Lap(), i, kNTargets);
+                   timer.Lap(), i + 1U, kNTargets);
+      }
+    }
+
+    timer.Stop();
+    fmt::print(stderr, "\n");
+
+    timer.Start();
+    for (auto i = 0U; i < consensus_futures.size(); ++i) {
+      dst.push_back(consensus_futures[i].get());
+      if (i > 0U && (i & 127U) == 0U || i + 1U == kNTargets) {
+        fmt::print(stderr,
+                   "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
+                   "consensus_futures futures",
+                   timer.Lap(), i + 1U, kNTargets);
       }
     }
 
@@ -352,7 +476,6 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
   }
 
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n", timer.elapsed_time());
-
   return dst;
 }
 
