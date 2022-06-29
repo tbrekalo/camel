@@ -82,7 +82,7 @@ auto FindOverlaps(
 
   auto const ovlp_len = [](biosoup::Overlap const& ovlp) -> std::uint32_t {
     return std::max(ovlp.lhs_end - ovlp.lhs_begin,
-                    ovlp.rhs_end - ovlp.lhs_begin);
+                    ovlp.rhs_end - ovlp.rhs_begin);
   };
 
   auto const ovlp_err = [&ovlp_len](biosoup::Overlap const& ovlp) -> double {
