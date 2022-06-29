@@ -19,7 +19,7 @@ namespace detail {
 
 static constexpr auto kMinimizeBatchCap = 1UL << 34UL;
 static constexpr auto kMapBatchCap = 1UL << 26UL;
-static constexpr auto kMxOvlps = 4 * 120U;
+static constexpr auto kMxOvlps = 4 * 16U;
 
 }  // namespace detail
 
@@ -50,12 +50,12 @@ auto FindOverlaps(
         std::vector<biosoup::Overlap>().swap(dst[ovlp.rhs_id]);
       }
       case detail::OverlapType::kInternal: {
-        if (1.1 * reads[ovlp.lhs_id]->inflated_len <
+        if (1.25 * reads[ovlp.lhs_id]->inflated_len <
             reads[ovlp.rhs_id]->inflated_len) {
           is_contained[ovlp.lhs_id] = 1U;
           std::vector<biosoup::Overlap>().swap(dst[ovlp.lhs_id]);
         } else if (reads[ovlp.lhs_id]->inflated_len >
-                   1.1 * reads[ovlp.lhs_id]->inflated_len) {
+                   1.25 * reads[ovlp.lhs_id]->inflated_len) {
           is_contained[ovlp.rhs_id] = 1U;
           std::vector<biosoup::Overlap>().swap(dst[ovlp.rhs_id]);
         }
@@ -117,6 +117,8 @@ auto FindOverlaps(
                                                  detail::kMinimizeBatchCap);
 
       minimizer_engine.Minimize(minimize_first, minimize_last, true);
+      minimizer_engine.Filter(map_cfg.filter_p);
+
       fmt::print(stderr,
                  "[camel::FindOverlaps]({:12.3f}) minimized "
                  "{} / {} reads\n",
@@ -140,7 +142,7 @@ auto FindOverlaps(
                     std::remove_if(
                         ovlps.begin(), ovlps.end(),
                         [&ovlp_err](biosoup::Overlap const& ovlp) -> bool {
-                          return ovlp_err(ovlp) > 0.3;
+                          return ovlp_err(ovlp) > 0.2;
                         }),
 
                     ovlps.end());
