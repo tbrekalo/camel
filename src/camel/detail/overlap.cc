@@ -70,4 +70,10 @@ auto OverlapScore(biosoup::Overlap const& ovlp) -> double {
          (OverlapLength(ovlp) + ovlp.score);
 }
 
+auto OverlapError(biosoup::Overlap const& ovlp) -> double {
+  return 1.0 - static_cast<double>(std::min(ovlp.lhs_end - ovlp.lhs_begin,
+                                            ovlp.rhs_end - ovlp.rhs_begin)) /
+                   static_cast<double>(OverlapLength(ovlp));
+}
+
 }  // namespace camel::detail

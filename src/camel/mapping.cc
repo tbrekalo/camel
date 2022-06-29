@@ -19,7 +19,9 @@ namespace detail {
 
 static constexpr auto kMinimizeBatchCap = 1UL << 34UL;
 static constexpr auto kMapBatchCap = 1UL << 26UL;
-static constexpr auto kMxOvlps = 4 * 16U;
+static constexpr auto kMxOvlps = 128U;
+
+static constexpr auto kContainmentRatio = 1.05;
 
 }  // namespace detail
 
@@ -50,12 +52,13 @@ auto FindOverlaps(
         std::vector<biosoup::Overlap>().swap(dst[ovlp.rhs_id]);
       }
       case detail::OverlapType::kInternal: {
-        if (1.25 * reads[ovlp.lhs_id]->inflated_len <
+        if (detail::kContainmentRatio * reads[ovlp.lhs_id]->inflated_len <
             reads[ovlp.rhs_id]->inflated_len) {
           is_contained[ovlp.lhs_id] = 1U;
           std::vector<biosoup::Overlap>().swap(dst[ovlp.lhs_id]);
         } else if (reads[ovlp.lhs_id]->inflated_len >
-                   1.25 * reads[ovlp.lhs_id]->inflated_len) {
+                   detail::kContainmentRatio *
+                       reads[ovlp.lhs_id]->inflated_len) {
           is_contained[ovlp.rhs_id] = 1U;
           std::vector<biosoup::Overlap>().swap(dst[ovlp.rhs_id]);
         }
@@ -79,17 +82,6 @@ auto FindOverlaps(
 
   auto minimizer_engine = ram::MinimizerEngine(
       state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
-
-  auto const ovlp_len = [](biosoup::Overlap const& ovlp) -> std::uint32_t {
-    return std::max(ovlp.lhs_end - ovlp.lhs_begin,
-                    ovlp.rhs_end - ovlp.rhs_begin);
-  };
-
-  auto const ovlp_err = [&ovlp_len](biosoup::Overlap const& ovlp) -> double {
-    return 1.0 - static_cast<double>(std::min(ovlp.lhs_end - ovlp.lhs_begin,
-                                              ovlp.rhs_end - ovlp.rhs_begin)) /
-                     static_cast<double>(ovlp_len(ovlp));
-  };
 
   auto const find_batch_last =
       [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
@@ -133,28 +125,28 @@ auto FindOverlaps(
         map_futures.reserve(std::distance(map_first, map_last));
         for (auto iter = map_first; iter != map_last; ++iter) {
           map_futures.emplace_back(state.thread_pool->Submit(
-              [&reads, &minimizer_engine, &ovlp_len,
-               &ovlp_err](std::vector<
-                          std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-                              read_iter) -> std::vector<biosoup::Overlap> {
+              [&reads, &minimizer_engine](
+                  std::vector<
+                      std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
+                      read_iter) -> std::vector<biosoup::Overlap> {
                 auto ovlps = minimizer_engine.Map(*read_iter, true, true);
                 ovlps.erase(
-                    std::remove_if(
-                        ovlps.begin(), ovlps.end(),
-                        [&ovlp_err](biosoup::Overlap const& ovlp) -> bool {
-                          return ovlp_err(ovlp) > 0.2;
-                        }),
+                    std::remove_if(ovlps.begin(), ovlps.end(),
+                                   [](biosoup::Overlap const& ovlp) -> bool {
+                                     return detail::OverlapError(ovlp) > 0.3;
+                                   }),
 
                     ovlps.end());
 
                 if (ovlps.size() > detail::kMxOvlps) {
-                  std::nth_element(
-                      ovlps.begin(), ovlps.begin() + detail::kMxOvlps,
-                      ovlps.end(),
-                      [&ovlp_len](biosoup::Overlap const& a,
-                                  biosoup::Overlap const& b) -> bool {
-                        return ovlp_len(a) > ovlp_len(b);
-                      });
+                  std::nth_element(ovlps.begin(),
+                                   ovlps.begin() + detail::kMxOvlps,
+                                   ovlps.end(),
+                                   [](biosoup::Overlap const& a,
+                                      biosoup::Overlap const& b) -> bool {
+                                     return detail::OverlapLength(a) >
+                                            detail::OverlapLength(b);
+                                   });
                   decltype(ovlps)(ovlps.begin(),
                                   ovlps.begin() + detail::kMxOvlps)
                       .swap(ovlps);
@@ -196,14 +188,14 @@ auto FindOverlaps(
     for (auto read_id = 0U; read_id < reads.size(); ++read_id) {
       if (dst[read_id].size() > detail::kMxOvlps) {
         defrag_futures.emplace_back(state.thread_pool->Submit(
-            [&dst, &ovlp_len](std::uint32_t const read_id) -> void {
-              std::nth_element(dst[read_id].begin(),
-                               dst[read_id].begin() + detail::kMxOvlps,
-                               dst[read_id].end(),
-                               [&ovlp_len](biosoup::Overlap const& a,
-                                           biosoup::Overlap const& b) -> bool {
-                                 return ovlp_len(a) > ovlp_len(b);
-                               });
+            [&dst](std::uint32_t const read_id) -> void {
+              std::nth_element(
+                  dst[read_id].begin(), dst[read_id].begin() + detail::kMxOvlps,
+                  dst[read_id].end(),
+                  [](biosoup::Overlap const& a,
+                     biosoup::Overlap const& b) -> bool {
+                    return detail::OverlapLength(a) > detail::OverlapLength(b);
+                  });
 
               std::vector<biosoup::Overlap>(
                   dst[read_id].begin(), dst[read_id].begin() + detail::kMxOvlps)
