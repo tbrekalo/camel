@@ -65,6 +65,39 @@ struct ReferenceWindow {
   std::vector<AlignedSegment> aligned_segments;
 };
 
+class NucleicCodeView {
+ public:
+  NucleicCodeView(biosoup::NucleicAcid const* nucleic_acid,
+                  bool is_reverse_complement)
+      : nucleic_acid_(nucleic_acid),
+        decode_impl_(is_reverse_complement ? &DecodeReverseComplementImpl
+                                           : &DecodeImpl) {}
+
+  auto Decode(std::size_t const pos) const noexcept -> std::uint8_t {
+    return decode_impl_(nucleic_acid_, pos);
+  }
+
+ private:
+  using ViewDecodeImplPtr = std::uint8_t (*)(biosoup::NucleicAcid const*,
+                                             std::size_t);
+
+  static auto DecodeImpl(biosoup::NucleicAcid const* nucleic_acid,
+                         std::size_t pos) noexcept -> std::uint8_t {
+    return ((nucleic_acid->deflated_data[pos >> 5] >> ((pos << 1) & 63)) & 3);
+  }
+
+  static auto DecodeReverseComplementImpl(
+      biosoup::NucleicAcid const* nucleic_acid, std::size_t pos) noexcept
+      -> std::uint8_t {
+    pos = nucleic_acid->inflated_len - 1 - pos;
+    return (((nucleic_acid->deflated_data[pos >> 5] >> ((pos << 1) & 63)) & 3) ^
+            3);
+  }
+
+  biosoup::NucleicAcid const* nucleic_acid_;
+  ViewDecodeImplPtr decode_impl_;
+};
+
 [[nodiscard]] static auto EstimateCoverage(
     State& state,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
@@ -148,20 +181,20 @@ struct ReferenceWindow {
   /* clang-format on */
 }
 
-[[nodiscard]] static auto CalculateEdlibAlignments(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<biosoup::Overlap> const& overlaps)
-    -> std::vector<EdlibAlignResult> {
-  auto dst = std::vector<EdlibAlignResult>(overlaps.size());
-  std::transform(overlaps.cbegin(), overlaps.cend(), dst.begin(),
-                 [&reads](biosoup::Overlap const& ovlp) -> EdlibAlignResult {
-                   auto const [lhs_substr, rhs_substr] =
-                       ExtractSubstrings(reads, ovlp);
-                   return AlignStrings(lhs_substr, rhs_substr);
-                 });
-
-  return dst;
-}
+// [[nodiscard]] static auto CalculateEdlibAlignments(
+//     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+//     std::vector<biosoup::Overlap> const& overlaps)
+//     -> std::vector<EdlibAlignResult> {
+//   auto dst = std::vector<EdlibAlignResult>(overlaps.size());
+//   std::transform(overlaps.cbegin(), overlaps.cend(), dst.begin(),
+//                  [&reads](biosoup::Overlap const& ovlp) -> EdlibAlignResult {
+//                    auto const [lhs_substr, rhs_substr] =
+//                        ExtractSubstrings(reads, ovlp);
+//                    return AlignStrings(lhs_substr, rhs_substr);
+//                  });
+//
+//   return dst;
+// }
 
 [[nodiscard]] static auto CalculateCoverage(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
@@ -401,10 +434,8 @@ static auto BindReadSegmentsToWindows(
   }
 }
 
-[[nodiscard]] static auto CreateWindowsFromAlignments() 
-  -> std::vector<ReferenceWindow> {
-
-}
+[[nodiscard]] static auto CreateWindowsFromAlignments()
+    -> std::vector<ReferenceWindow> {}
 
 // [[nodiscard]] static auto AlignReadsToWindows(
 //     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
@@ -416,12 +447,13 @@ static auto BindReadSegmentsToWindows(
 //   auto coverage = CalculateCoverage(reads, overlaps, edlib_results);
 //   auto windows = WindowIntervalsToWindows(
 //       reads[query_id]->inflated_len,
-//       CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate)));
+//       CalcWindowIntervals(CallErrorSites(coverage,
+//       global_coverage_estimate)));
 //   BindReadSegmentsToWindows(reads, overlaps, edlib_results, windows);
-// 
+//
 //   std::for_each(edlib_results.begin(), edlib_results.end(),
 //                 edlibFreeAlignResult);
-// 
+//
 //   return windows;
 // }
 
