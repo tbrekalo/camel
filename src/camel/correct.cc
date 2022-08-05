@@ -65,16 +65,25 @@ struct ReferenceWindow {
   std::vector<AlignedSegment> aligned_segments;
 };
 
-class NucleicCodeView {
+class NucleicView {
  public:
-  NucleicCodeView(biosoup::NucleicAcid const* nucleic_acid,
-                  bool is_reverse_complement)
+  NucleicView(biosoup::NucleicAcid const* nucleic_acid,
+              bool is_reverse_complement)
       : nucleic_acid_(nucleic_acid),
         decode_impl_(is_reverse_complement ? &DecodeReverseComplementImpl
                                            : &DecodeImpl) {}
 
   auto Decode(std::size_t const pos) const noexcept -> std::uint8_t {
     return decode_impl_(nucleic_acid_, pos);
+  }
+
+  auto InflateData(std::uint32_t const pos, std::uint32_t const len) const
+      -> std::string {
+    auto dst = std::string(len, '\n');
+    for (auto i = 0U; i < len; ++i) {
+      dst[i] = Decode(pos + i);
+    }
+    return dst;
   }
 
  private:
@@ -155,17 +164,13 @@ class NucleicCodeView {
 [[nodiscard]] static auto ExtractSubstrings(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
-  auto lhs_str = reads[ovlp.lhs_id]->InflateData(ovlp.lhs_begin,
-                                                 ovlp.lhs_end - ovlp.lhs_begin);
-  auto rhs_str = reads[ovlp.rhs_id]->InflateData(ovlp.rhs_begin,
-                                                 ovlp.rhs_end - ovlp.rhs_begin);
+  auto const lhs_view = NucleicView(reads[ovlp.lhs_id].get(), false);
+  auto const rhs_view = NucleicView(reads[ovlp.rhs_id].get(), !ovlp.strand);
 
-  if (!ovlp.strand) {
-    auto acid = biosoup::NucleicAcid("", rhs_str);
-    acid.ReverseAndComplement();
-
-    rhs_str = acid.InflateData();
-  }
+  auto lhs_str =
+      lhs_view.InflateData(ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
+  auto rhs_str =
+      rhs_view.InflateData(ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
 
   return {std::move(lhs_str), std::move(rhs_str)};
 }
@@ -180,21 +185,6 @@ class NucleicCodeView {
       edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
   /* clang-format on */
 }
-
-// [[nodiscard]] static auto CalculateEdlibAlignments(
-//     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-//     std::vector<biosoup::Overlap> const& overlaps)
-//     -> std::vector<EdlibAlignResult> {
-//   auto dst = std::vector<EdlibAlignResult>(overlaps.size());
-//   std::transform(overlaps.cbegin(), overlaps.cend(), dst.begin(),
-//                  [&reads](biosoup::Overlap const& ovlp) -> EdlibAlignResult {
-//                    auto const [lhs_substr, rhs_substr] =
-//                        ExtractSubstrings(reads, ovlp);
-//                    return AlignStrings(lhs_substr, rhs_substr);
-//                  });
-//
-//   return dst;
-// }
 
 [[nodiscard]] static auto CalculateCoverage(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
@@ -314,11 +304,10 @@ template <class PredFn>
 [[nodiscard]] static auto CalcWindowIntervals(
     std::vector<std::uint32_t> error_sites) -> std::vector<Interval> {
   auto dst = std::vector<Interval>(error_sites.size());
-  std::transform(
-      error_sites.cbegin(), error_sites.cend(), dst.begin(),
-      [](std::uint32_t const pos) -> std::pair<std::uint32_t, std::uint32_t> {
-        return {pos, pos};
-      });
+  std::transform(error_sites.cbegin(), error_sites.cend(), dst.begin(),
+                 [](std::uint32_t const pos) -> Interval {
+                   return {pos, pos};
+                 });
 
   auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
   auto constexpr kDeadInterval = Interval{1, 0};
@@ -412,6 +401,9 @@ static auto BindReadSegmentsToWindows(
 
     auto lhs_last = lhs_first;
     auto rhs_last = rhs_first;
+
+    auto const rhs_view =
+        NucleicView(reads[overlaps[i].rhs_id].get(), !overlaps[i].strand);
     for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
       if (lhs_last == windows[win_idx].interval.first) {
         lhs_first = lhs_last;
@@ -419,10 +411,9 @@ static auto BindReadSegmentsToWindows(
       } else if (lhs_last == windows[win_idx].interval.last) {
         auto aligned_interval = Interval{.first = rhs_first, .last = rhs_last};
         if (IntervalLength(aligned_interval) >= 42U) {
-          windows[win_idx].aligned_segments.push_back(
-              AlignedSegment{.aligned_interval = aligned_interval,
-                             .bases = reads[overlaps[i].rhs_id]->InflateData(
-                                 rhs_first, rhs_last - rhs_first)});
+          windows[win_idx].aligned_segments.push_back(AlignedSegment{
+              .aligned_interval = aligned_interval,
+              .bases = rhs_view.InflateData(rhs_first, rhs_last - rhs_first)});
         }
 
         ++win_idx;
@@ -434,8 +425,24 @@ static auto BindReadSegmentsToWindows(
   }
 }
 
-[[nodiscard]] static auto CreateWindowsFromAlignments()
-    -> std::vector<ReferenceWindow> {}
+[[nodiscard]] static auto CreateWindowsFromAlignments(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    std::vector<biosoup::Overlap> const& overlaps,
+    std::vector<EdlibAlignResult> const& edlib_results,
+    std::uint32_t const global_coverage_estimate)
+    -> std::vector<ReferenceWindow> {
+  auto const query_id = overlaps.front().lhs_id;
+  auto coverage = CalculateCoverage(reads, overlaps, edlib_results);
+  auto windows = WindowIntervalsToWindows(
+      reads[query_id]->inflated_len,
+      CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate)));
+  BindReadSegmentsToWindows(reads, overlaps, edlib_results, windows);
+
+  std::for_each(edlib_results.begin(), edlib_results.end(),
+                edlibFreeAlignResult);
+
+  return windows;
+}
 
 // [[nodiscard]] static auto AlignReadsToWindows(
 //     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
@@ -468,199 +475,188 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
   auto timer = biosoup::Timer();
 
   timer.Start();
-  auto const ovlps = FindOverlaps(state, map_cfg, src_reads);
+  auto const overlaps = FindOverlaps(state, map_cfg, src_reads);
 
   auto target_ids = std::vector<std::uint32_t>();
-  for (auto read_id = 0U; read_id < ovlps.size(); ++read_id) {
-    if (!ovlps[read_id].empty()) {
+  for (auto read_id = 0U; read_id < overlaps.size(); ++read_id) {
+    if (!overlaps[read_id].empty()) {
       target_ids.push_back(read_id);
     }
   }
 
   auto const kNTargets = target_ids.size();
-  auto const kNContained = ovlps.size() - kNTargets;
+  auto const kNContained = overlaps.size() - kNTargets;
+
+  auto const kNOverlaps = std::transform_reduce(
+      overlaps.cbegin(), overlaps.cend(), 0UL, std::plus<std::size_t>(),
+      [](std::vector<biosoup::Overlap> const& ovlps) -> std::size_t {
+        return ovlps.size();
+      });
 
   timer.Stop();
 
   timer.Start();
-  auto const kCovgEstimate = detail::EstimateCoverage(state, src_reads, ovlps);
+  auto const kCovgEstimate =
+      detail::EstimateCoverage(state, src_reads, overlaps);
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) coverage estimate: {}\n",
              timer.Stop(), kCovgEstimate);
 
-  {
-    timer.Start();
-
-    // for (auto i = 0U; i < kNTargets; ++i) {
-    //   auto const target_id = target_ids[i];
-    //   if (!ovlps[target_id].empty()) {
-    //     alignments[i].reserve(ovlps[target_id].size());
-    //     for (auto const& ovlp : ovlps[target_id]) {
-    //       align_futures.emplace_back(
-    //           state.thread_pool->Submit(detail::CompressedAlignment,
-    //                                     std::cref(src_reads),
-    //                                     std::cref(ovlp)));
-    //     }
-    //   }
-    // }
-
-    // auto consensus_futures =
-    //     std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
-    // consensus_futures.reserve(kNTargets);
-
-    // auto align_future_id = 0U;
-    // for (auto i = 0U; i < kNTargets; ++i) {
-    //   auto const target_id = target_ids[i];
-    //   for (auto ovlp_id = 0U; ovlp_id < ovlps[target_id].size(); ++ovlp_id) {
-    //     alignments[i].push_back(align_futures[align_future_id++].get());
-    //   }
-
-    //   consensus_futures.emplace_back(state.thread_pool->Submit(
-    //       [kCovgEstimate](std::unique_ptr<biosoup::NucleicAcid> const& read,
-    //                       std::vector<detail::AlignmentSummary>& alignments)
-    //           -> std::unique_ptr<biosoup::NucleicAcid> {
-    //         auto dst = detail::GenerateConsensus(
-    //             read, alignments, std::max(2U, kCovgEstimate / 3U));
-
-    //         alignments.clear();
-    //         return dst;
-    //       },
-    //       std::cref(src_reads[target_id]), std::ref(alignments[i])));
-
-    //   if (i > 0 && (i & 127U) == 0U || i + 1U == kNTargets) {
-    //     fmt::print(stderr,
-    //                "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
-    //                "alignment futures",
-    //                timer.Lap(), i + 1U, kNTargets);
-    //   }
-    // }
-
-    // timer.Stop();
-    // fmt::print(stderr, "\n");
-
-    // timer.Start();
-    // for (auto i = 0U; i < consensus_futures.size(); ++i) {
-    //   corrected_targets.push_back(consensus_futures[i].get());
-    //   if (i > 0U && (i & 127U) == 0U || i + 1U == kNTargets) {
-    //     fmt::print(stderr,
-    //                "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
-    //                "consensus_futures futures",
-    //                timer.Lap(), i + 1U, kNTargets);
-    //   }
-    // }
-
-    // timer.Stop();
-    // fmt::print(stderr, "\n");
-  }
+  auto alignments = std::vector<std::vector<EdlibAlignResult>>(kNTargets);
 
   {
     timer.Start();
-    for (auto i = 0U; i < corrected_targets.size(); ++i) {
-      corrected_targets[i]->id = i;
-    }
+    auto align_futures =
+        std::vector<std::vector<std::future<EdlibAlignResult>>>(kNTargets);
 
-    auto queries = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-
-    queries.reserve(kNContained);
-    std::copy_if(
-        std::make_move_iterator(src_reads.begin()),
-        std::make_move_iterator(src_reads.end()), std::back_inserter(queries),
-        [&ovlps](std::unique_ptr<biosoup::NucleicAcid> const& acid) -> bool {
-          return ovlps[acid->id].empty();
-        });
-
-    for (auto i = 0U; i < queries.size(); ++i) {
-      queries[i]->id = kNTargets + i;
-    }
-
-    fmt::print(
-        stderr,
-        "[camel::ErrorCorrect]({:12.3f}) prepared reads for reconstruction\n",
-        timer.Stop());
-
-    timer.Start();
-    auto minimizer_engine = ram::MinimizerEngine(
-        state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
-
-    minimizer_engine.Minimize(corrected_targets.cbegin(),
-                              corrected_targets.cend());
-    minimizer_engine.Filter(map_cfg.filter_p);
-
-    fmt::print(
-        stderr,
-        "[camel::ErrorCorrect]({:12.3f}) minimized {} corrected targets\n",
-        timer.Stop(), corrected_targets.size());
-
-    timer.Start();
-    auto reconstruct_futures = std::vector<std::future<void>>();
-    for (auto& query : queries) {
-      reconstruct_futures.emplace_back(state.thread_pool->Submit(
-          [&corrected_targets, &minimizer_engine](
-              std::unique_ptr<biosoup::NucleicAcid>& acid) -> void {
-            auto ovlps = minimizer_engine.Map(acid, true, true, true);
-            ovlps.erase(
-                std::remove_if(
-                    ovlps.begin(), ovlps.end(),
-                    [&corrected_targets,
-                     &acid](biosoup::Overlap const& ovlp) -> bool {
-                      auto const kOvlpType = detail::DetermineOverlapType(
-                          ovlp, corrected_targets[ovlp.rhs_id]->inflated_len,
-                          acid->inflated_len);
-                      return detail::OverlapError(ovlp) > 0.3 ||
-                             kOvlpType != detail::OverlapType::kLhsContained;
-                    }),
-                ovlps.end());
-
-            if (!ovlps.empty()) {
-              auto const mx_ovlp = std::max_element(
-                  ovlps.begin(), ovlps.end(),
-                  [](biosoup::Overlap const& a,
-                     biosoup::Overlap const& b) -> bool {
-                    return detail::OverlapLength(a) < detail::OverlapLength(b);
-                  });
-
-              auto target_extract =
-                  corrected_targets[mx_ovlp->rhs_id]->InflateData(
-                      mx_ovlp->rhs_begin,
-                      mx_ovlp->rhs_end - mx_ovlp->rhs_begin);
-
-              if (!(mx_ovlp->strand)) {
-                auto rc_buff = biosoup::NucleicAcid("", target_extract);
-                rc_buff.ReverseAndComplement();
-
-                target_extract = rc_buff.InflateData();
-              }
-
-              auto acid_corrected = std::make_unique<biosoup::NucleicAcid>(
-                  acid->name, target_extract);
-
-              acid = std::move(acid_corrected);
-            } else {
-              acid->block_quality.clear();  // TODO: cheeky
-            }
-          },
-          std::ref(query)));
-    }
-
-    for (auto i = 0U; i < reconstruct_futures.size(); ++i) {
-      reconstruct_futures[i].wait();
-      if ((i & 1023) == 0U || i + 1U == reconstruct_futures.size()) {
-        fmt::print(
-            stderr,
-            "\r[camel::ErrorCorrect]({:12.3f}) reconstructed {} / {} reads",
-            timer.Lap(), i + 1U, reconstruct_futures.size());
+    for (auto i = 0U; i < kNTargets; ++i) {
+      auto const target_id = target_ids[i];
+      if (!overlaps[target_id].empty()) {
+        align_futures[i].resize(overlaps[target_id].size());
+        for (auto j = 0U; j < overlaps[target_id].size(); ++j) {
+          align_futures[i][j] = state.thread_pool->Submit(
+              [&src_reads,
+               &ovlp = overlaps[target_id][j]]() -> EdlibAlignResult {
+                auto const [lhs_str, rhs_str] =
+                    detail::ExtractSubstrings(src_reads, ovlp);
+                return detail::AlignStrings(lhs_str, rhs_str);
+              });
+        }
       }
     }
 
-    timer.Stop();
-    fmt::print(stderr, "\n");
+    alignments.resize(kNOverlaps);
+    auto align_futures_collected = 0U;
+    for (auto i = 0U; i < kNTargets; ++i) {
+      alignments[i].resize(align_futures[i].size());
+      std::transform(align_futures[i].begin(), align_futures[i].end(),
+                     alignments[i].begin(),
+                     std::mem_fn(&std::future<EdlibAlignResult>::get));
+      align_futures_collected += alignments[i].size();
 
-    src_reads.clear();
+      fmt::print(stderr,
+                 "\r[camel::ErrorCorrect({:12.3f})] collected {} / {} "
+                 "alignment futures",
+                 timer.Lap(), align_futures_collected, kNOverlaps);
+    }
 
-    dst.reserve(kNTargets + kNContained);
-    std::move(corrected_targets.begin(), corrected_targets.end(),
-              std::back_inserter(dst));
-    std::move(queries.begin(), queries.end(), std::back_inserter(dst));
+    fmt::print(
+        stderr,
+        "\n[camel::ErrorCorrect]({:12.3f}) pairwise aligned {} overlaps\n",
+        timer.Stop(), kNOverlaps);
   }
+
+  // {
+  //   timer.Start();
+  //   for (auto i = 0U; i < corrected_targets.size(); ++i) {
+  //     corrected_targets[i]->id = i;
+  //   }
+
+  //   auto queries = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
+
+  //   queries.reserve(kNContained);
+  //   std::copy_if(
+  //       std::make_move_iterator(src_reads.begin()),
+  //       std::make_move_iterator(src_reads.end()),
+  //       std::back_inserter(queries),
+  //       [&overlaps](std::unique_ptr<biosoup::NucleicAcid> const& acid) ->
+  //       bool {
+  //         return overlaps[acid->id].empty();
+  //       });
+
+  //   for (auto i = 0U; i < queries.size(); ++i) {
+  //     queries[i]->id = kNTargets + i;
+  //   }
+
+  //   fmt::print(
+  //       stderr,
+  //       "[camel::ErrorCorrect]({:12.3f}) prepared reads for
+  //       reconstruction\n", timer.Stop());
+
+  //   timer.Start();
+  //   auto minimizer_engine = ram::MinimizerEngine(
+  //       state.thread_pool, map_cfg.kmer_len, map_cfg.win_len);
+
+  //   minimizer_engine.Minimize(corrected_targets.cbegin(),
+  //                             corrected_targets.cend());
+  //   minimizer_engine.Filter(map_cfg.filter_p);
+
+  //   fmt::print(
+  //       stderr,
+  //       "[camel::ErrorCorrect]({:12.3f}) minimized {} corrected targets\n",
+  //       timer.Stop(), corrected_targets.size());
+
+  //   timer.Start();
+  //   auto reconstruct_futures = std::vector<std::future<void>>();
+  //   for (auto& query : queries) {
+  //     reconstruct_futures.emplace_back(state.thread_pool->Submit(
+  //         [&corrected_targets, &minimizer_engine](
+  //             std::unique_ptr<biosoup::NucleicAcid>& acid) -> void {
+  //           auto ovlps = minimizer_engine.Map(acid, true, true, true);
+  //           ovlps.erase(
+  //               std::remove_if(
+  //                   ovlps.begin(), ovlps.end(),
+  //                   [&corrected_targets,
+  //                    &acid](biosoup::Overlap const& ovlp) -> bool {
+  //                     auto const kOvlpType = detail::DetermineOverlapType(
+  //                         ovlp, corrected_targets[ovlp.rhs_id]->inflated_len,
+  //                         acid->inflated_len);
+  //                     return detail::OverlapError(ovlp) > 0.3 ||
+  //                            kOvlpType != detail::OverlapType::kLhsContained;
+  //                   }),
+  //               ovlps.end());
+
+  //           if (!ovlps.empty()) {
+  //             auto const mx_ovlp = std::max_element(
+  //                 ovlps.begin(), ovlps.end(),
+  //                 [](biosoup::Overlap const& a,
+  //                    biosoup::Overlap const& b) -> bool {
+  //                   return detail::OverlapLength(a) <
+  //                   detail::OverlapLength(b);
+  //                 });
+
+  //             auto target_extract =
+  //                 corrected_targets[mx_ovlp->rhs_id]->InflateData(
+  //                     mx_ovlp->rhs_begin,
+  //                     mx_ovlp->rhs_end - mx_ovlp->rhs_begin);
+
+  //             if (!(mx_ovlp->strand)) {
+  //               auto rc_buff = biosoup::NucleicAcid("", target_extract);
+  //               rc_buff.ReverseAndComplement();
+
+  //               target_extract = rc_buff.InflateData();
+  //             }
+
+  //             auto acid_corrected = std::make_unique<biosoup::NucleicAcid>(
+  //                 acid->name, target_extract);
+
+  //             acid = std::move(acid_corrected);
+  //           } else {
+  //             acid->block_quality.clear();  // TODO: cheeky
+  //           }
+  //         },
+  //         std::ref(query)));
+  //   }
+
+  //   for (auto i = 0U; i < reconstruct_futures.size(); ++i) {
+  //     reconstruct_futures[i].wait();
+  //     if ((i & 1023) == 0U || i + 1U == reconstruct_futures.size()) {
+  //       fmt::print(
+  //           stderr,
+  //           "\r[camel::ErrorCorrect]({:12.3f}) reconstructed {} / {} reads",
+  //           timer.Lap(), i + 1U, reconstruct_futures.size());
+  //     }
+  //   }
+
+  //   timer.Stop();
+  //   fmt::print(stderr, "\n");
+
+  //   src_reads.clear();
+
+  //   dst.reserve(kNTargets + kNContained);
+  //   std::move(corrected_targets.begin(), corrected_targets.end(),
+  //             std::back_inserter(dst));
+  //   std::move(queries.begin(), queries.end(), std::back_inserter(dst));
+  // }
 
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n", timer.elapsed_time());
   return dst;
