@@ -26,40 +26,9 @@ namespace camel {
 
 namespace detail {
 
+static auto constexpr kSqrt5 = 2.2360679775;
 static auto constexpr kShrinkShift = 3U;
-static auto constexpr kMaxInsLen = 32U;
-
-struct Insertion {
-  std::uint64_t val;
-  std::uint8_t len;
-};
-
-struct MatchInterval {
-  std::uint32_t first;
-  std::uint32_t last;
-};
-
-struct MismatchSite {
-  std::uint32_t pos;
-  std::uint8_t code;
-};
-
-struct DeletinInterval {
-  std::uint32_t first;
-  std::uint32_t last;
-};
-
-struct InsertionSite {
-  std::uint32_t pos;
-  Insertion ins;
-};
-
-struct AlignmentSummary {
-  std::vector<MatchInterval> mats;
-  std::vector<DeletinInterval> dels;
-  std::vector<InsertionSite> inss;
-  std::vector<MismatchSite> miss;
-};
+static auto constexpr kWinLength = 420U;
 
 struct CoverageSignals {
   std::array<std::uint16_t, 6U> signals;
@@ -68,52 +37,32 @@ struct CoverageSignals {
   static constexpr auto kInsIdx = 5U;
 };
 
-class EdlibAlignRAIIRes : public EdlibAlignResult {
-  bool engaged = false;
+struct Interval {
+  std::uint32_t first;
+  std::uint32_t last;
+};
 
- public:
-  auto Release() noexcept {
-    if (engaged) {
-      edlibFreeAlignResult(*static_cast<EdlibAlignResult*>(this));
-      engaged = false;
-    }
-  }
+constexpr auto operator==(Interval const lhs, Interval const rhs) noexcept
+    -> bool {
+  return lhs.first == rhs.first && lhs.last == rhs.last;
+}
 
-  EdlibAlignRAIIRes(EdlibAlignResult const& eres) noexcept
-      : EdlibAlignResult(eres), engaged(true) {}
+constexpr auto operator!=(Interval const lhs, Interval const rhs) -> bool {
+  return !(lhs == rhs);
+}
 
-  EdlibAlignRAIIRes& operator=(EdlibAlignResult const& eres) noexcept {
-    Release();
+constexpr auto IntervalLength(Interval const intv) -> std::uint32_t {
+  return intv.last - intv.first;
+}
 
-    *this = EdlibAlignRAIIRes(eres);
-    return *this;
-  }
+struct AlignedSegment {
+  Interval aligned_interval;
+  std::string bases;
+};
 
-  EdlibAlignRAIIRes(EdlibAlignRAIIRes const&) = delete;
-  EdlibAlignRAIIRes& operator=(EdlibAlignRAIIRes const&) = delete;
-
-  EdlibAlignRAIIRes(EdlibAlignRAIIRes&& that) noexcept {
-    *this = std::move(that);
-  }
-
-  EdlibAlignRAIIRes& operator=(EdlibAlignRAIIRes&& that) noexcept {
-    Release();
-
-    engaged = std::exchange(that.engaged, false);
-
-    status = that.status;
-    editDistance = that.editDistance;
-    endLocations = that.endLocations;
-    startLocations = that.startLocations;
-    numLocations = that.numLocations;
-    alignment = that.alignment;
-    alignmentLength = that.alignmentLength;
-    alphabetLength = that.alphabetLength;
-
-    return *this;
-  }
-
-  ~EdlibAlignRAIIRes() noexcept { Release(); }
+struct ReferenceWindow {
+  Interval interval;
+  std::vector<AlignedSegment> aligned_segments;
 };
 
 [[nodiscard]] static auto EstimateCoverage(
@@ -190,193 +139,291 @@ class EdlibAlignRAIIRes : public EdlibAlignResult {
 
 [[nodiscard]] static auto AlignStrings(std::string_view lhs_str_view,
                                        std::string_view rhs_str_view)
-    -> EdlibAlignRAIIRes {
+    -> EdlibAlignResult {
+  /* clang-format off */
   return edlibAlign(
-      lhs_str_view.data(), lhs_str_view.length(), rhs_str_view.data(),
-      rhs_str_view.length(),
+      lhs_str_view.data(), lhs_str_view.length(), 
+      rhs_str_view.data(), rhs_str_view.length(),
       edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
+  /* clang-format on */
 }
 
-[[nodiscard]] static auto CompressedAlignment(
+[[nodiscard]] static auto CalculateEdlibAlignments(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    biosoup::Overlap const& ovlp) -> AlignmentSummary {
-  auto [lhs_substr, rhs_substr] = ExtractSubstrings(reads, ovlp);
-  auto const edlib_res = AlignStrings(lhs_substr, rhs_substr);
+    std::vector<biosoup::Overlap> const& overlaps)
+    -> std::vector<EdlibAlignResult> {
+  auto dst = std::vector<EdlibAlignResult>(overlaps.size());
+  std::transform(overlaps.cbegin(), overlaps.cend(), dst.begin(),
+                 [&reads](biosoup::Overlap const& ovlp) -> EdlibAlignResult {
+                   auto const [lhs_substr, rhs_substr] =
+                       ExtractSubstrings(reads, ovlp);
+                   return AlignStrings(lhs_substr, rhs_substr);
+                 });
 
-  auto dst = AlignmentSummary{};
+  return dst;
+}
 
-  auto lhs_pos = ovlp.lhs_begin;
-  auto rhs_pos = 0U;
-  for (auto i = 0U; i < edlib_res.alignmentLength;) {
-    switch (edlib_res.alignment[i]) {
-      case 0: {
-        auto start = lhs_pos;
-        while (i < edlib_res.alignmentLength && edlib_res.alignment[i] == 0) {
+[[nodiscard]] static auto CalculateCoverage(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    std::vector<biosoup::Overlap> const& overlaps,
+    std::vector<EdlibAlignResult> const& edlib_results)
+    -> std::vector<CoverageSignals> {
+  auto const query_id = overlaps.front().lhs_id;
+  auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len);
+
+  for (auto i = 0U; i < reads[query_id]->inflated_len; ++i) {
+    ++dst[i].signals[reads[query_id]->Code(i)];
+  }
+
+  for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
+    auto const& edlib_res = edlib_results[ovlp_idx];
+    auto const& rhs_read = reads[overlaps[ovlp_idx].rhs_id];
+
+    auto lhs_pos = overlaps[ovlp_idx].lhs_begin;
+    auto rhs_pos = overlaps[ovlp_idx].rhs_begin;
+    for (auto i = 0; i < edlib_res.alignmentLength; ++i) {
+      switch (edlib_res.alignment[i]) {
+        case 0:  // match
+        case 3:  // mismatch
+          ++dst[lhs_pos].signals[rhs_read->Code(rhs_pos)];
           ++lhs_pos;
           ++rhs_pos;
-          ++i;
-        }
-
-        dst.mats.push_back(MatchInterval{.first = start, .last = lhs_pos});
-        break;
-      }
-      case 1: {
-        auto start = lhs_pos;
-        while (i < edlib_res.alignmentLength && edlib_res.alignment[i] == 1) {
+          break;
+        case 1:  // deletion on the query
+          ++dst[lhs_pos].signals[CoverageSignals::kDelIdx];
           ++lhs_pos;
-          ++i;
-        }
-
-        dst.dels.push_back(DeletinInterval{.first = start, .last = lhs_pos});
-        break;
-      }
-
-      case 2: {
-        auto val = 0ULL;
-        auto len = 0U;
-        while (i < edlib_res.alignmentLength && edlib_res.alignment[i] == 2) {
-          val = len < kMaxInsLen
-                    ? (((val << 2) |
-                        biosoup::kNucleotideCoder[rhs_substr[rhs_pos]]))
-                    : val;
-          len += (len < kMaxInsLen);
-
+        case 2:  // insertion on the query
+          ++dst[lhs_pos].signals[CoverageSignals::kInsIdx];
           ++rhs_pos;
-          ++i;
-        }
-
-        dst.inss.push_back(InsertionSite{
-            .pos = lhs_pos,
-            .ins =
-                Insertion{.val = val, .len = static_cast<std::uint8_t>(len)}});
-        break;
+        default:
+          break;
       }
-      case 3: {
-        dst.miss.push_back(MismatchSite{
-            .pos = lhs_pos,
-            .code = biosoup::kNucleotideCoder[rhs_substr[rhs_pos]]});
-        ++i;
-        break;
-      }
-
-      default:
-        ++i;
-        break;
     }
   }
 
   return dst;
 }
 
-[[nodiscard]] static auto GenerateConsensus(
-    std::unique_ptr<biosoup::NucleicAcid> const& read,
-    std::vector<AlignmentSummary> const& alignments,
-    std::uint32_t const kBackboneSignal)
-    -> std::unique_ptr<biosoup::NucleicAcid> {
-  auto covg = std::vector<CoverageSignals>(read->inflated_len);
+[[nodiscard]] static auto IsUnstableSite(CoverageSignals const& covg,
+                                         std::uint32_t const covg_estimate,
+                                         double const strong_base_ratio,
+                                         double const indle_ratio) -> bool {
+  auto const sig_sum =
+      std::accumulate(covg.signals.cbegin(), covg.signals.cend(), 0UL,
+                      std::plus<std::uint32_t>());
 
-  for (auto i = 0U; i < read->inflated_len; ++i) {
-    covg[i].signals[read->Code(i)] += kBackboneSignal;
-  }
+  auto const strong_base_threshold =
+      static_cast<std::uint32_t>(std::round(strong_base_ratio * sig_sum));
+  auto const indle_threshold =
+      static_cast<std::uint32_t>(std::round(indle_ratio * sig_sum));
+  auto const cutoff_threshold =
+      static_cast<std::uint32_t>(std::round(covg_estimate * kSqrt5));
 
-  auto insertions =
-      tsl::robin_map<std::uint32_t,
-                     std::vector<std::pair<Insertion, std::uint32_t>>>();
-
-  auto const record_insertion = [&insertions](InsertionSite const& is) -> void {
-    auto& ins_vec = insertions[is.pos];
-    auto ins_iter = std::find_if(
-        ins_vec.begin(), ins_vec.end(),
-        [ins = is.ins](
-            std::pair<Insertion, std::uint32_t> const& ins_cnt) -> bool {
-          return ins_cnt.first.val == ins.val && ins_cnt.first.len == ins.len;
-        });
-
-    if (ins_iter != ins_vec.end()) {
-      ++(ins_iter->second);
-    } else {
-      ins_vec.emplace_back(is.ins, 1U);
-    }
-  };
-
-  auto const decode_insertion =
-      [&insertions](std::uint32_t const pos) -> std::string {
-    auto [val, len] = insertions[pos].front().first;
-    auto dst = std::string(len, '\0');
-
-    for (auto i = 0U; i < len; ++i) {
-      dst[len - (i + 1U)] = biosoup::kNucleotideDecoder[val & 3U];
-      val >>= 2U;
-    }
-
-    return dst;
-  };
-
-  for (auto const& summary : alignments) {
-    for (auto const [lo, hi] : summary.mats) {
-      for (auto curr = lo; curr != hi; ++curr) {
-        ++covg[curr].signals[read->Code(curr)];
-      }
-    }
-
-    for (auto const [lo, hi] : summary.dels) {
-      for (auto curr = lo; curr != hi; ++curr) {
-        ++covg[curr].signals[CoverageSignals::kDelIdx];
-      }
-    }
-
-    for (auto const& ins_site : summary.inss) {
-      ++covg[ins_site.pos].signals[CoverageSignals::kInsIdx];
-      record_insertion(ins_site);
-    }
-
-    for (auto const [pos, code] : summary.miss) {
-      ++covg[pos].signals[code];
+  auto dst = true;
+  for (auto i = 0U; dst && i < 4U; ++i) {
+    if (covg.signals[i] >= strong_base_threshold ||
+        covg.signals[i] < cutoff_threshold) {
+      dst = false;
     }
   }
 
-  // filter weak insertions
-  for (auto iter = insertions.begin(); iter != insertions.end(); ++iter) {
-    auto& ins_vec = iter.value();
-    if (auto mx_iter = std::max_element(
-            ins_vec.begin(), ins_vec.end(),
-            [](std::pair<Insertion, std::uint32_t> const& lhs,
-               std::pair<Insertion, std::uint32_t> const& rhs) -> bool {
-              return lhs.second < rhs.second;
-            });
-        mx_iter != ins_vec.begin()) {
-      std::swap(*mx_iter, *ins_vec.begin());
-    }
-
-    ins_vec.resize(1);
-  }
-
-  auto corrected = std::string();
-  corrected.reserve(read->inflated_len + insertions.size() * 5);
-
-  for (auto i = 0U; i < covg.size(); ++i) {
-    auto const kMxIdx =
-        std::distance(covg[i].signals.begin(),
-                      std::max_element(covg[i].signals.begin(),
-                                       covg[i].signals.begin() + 5U));
-
-    auto const kSigSum =
-        std::accumulate(covg[i].signals.cbegin(), covg[i].signals.cbegin() + 5U,
-                        0U, std::plus<std::uint32_t>());
-
-    if (kMxIdx != CoverageSignals::kDelIdx) {
-      corrected.push_back(biosoup::kNucleotideDecoder[kMxIdx]);
-    }
-
-    if (covg[i].signals[CoverageSignals::kInsIdx] > kBackboneSignal &&
-        covg[i].signals[CoverageSignals::kInsIdx] > 0.66 * kSigSum) {
-      auto const kInsStr = decode_insertion(i);
-      corrected.insert(corrected.end(), kInsStr.cbegin(), kInsStr.cend());
+  for (auto i = 4U; dst && i < 6U; ++i) {
+    if (covg.signals[i] > indle_ratio) {
+      dst = false;
     }
   }
 
-  return std::make_unique<biosoup::NucleicAcid>(read->name, corrected);
+  return dst;
 }
+
+[[nodiscard]] static auto IsSnpSite(CoverageSignals const& covg,
+                                    std::uint32_t const covg_estimate) -> bool {
+  return IsUnstableSite(covg, covg_estimate, 0.8, 0.4);
+}
+
+[[nodiscard]] static auto IsErrorSite(CoverageSignals const& covg,
+                                      std::uint32_t const covg_estimate)
+    -> bool {
+  return IsUnstableSite(covg, covg_estimate, 0.9, 0.25);
+}
+
+template <class PredFn>
+[[nodiscard]] static auto CallSites(std::vector<CoverageSignals> const covg,
+                                    std::uint32_t const covg_estimate,
+                                    PredFn pred_fn)
+    -> std::enable_if_t<
+        std::is_invocable_r_v<bool, PredFn, CoverageSignals const,
+                              std::uint32_t const>,
+        std::vector<std::uint32_t>> {
+  auto buff = std::vector<std::uint32_t>();
+  buff.reserve(buff.size() / 100);
+  for (auto i = 0U; i < covg.size(); ++i) {
+    if (pred_fn(covg[i], covg_estimate)) {
+      buff.push_back(i);
+    }
+  }
+
+  return decltype(buff)(buff.begin(), buff.end());
+}
+
+[[nodiscard]] static auto CallSnpCandidates(
+    std::vector<CoverageSignals> const covg, std::uint32_t const covg_estimate)
+    -> std::vector<std::uint32_t> {
+  return CallSites(covg, covg_estimate, IsSnpSite);
+}
+
+[[nodiscard]] static auto CallErrorSites(
+    std::vector<CoverageSignals> const covg,
+    std::uint32_t const covg_estimate) {
+  return CallSites(covg, covg_estimate, IsErrorSite);
+}
+
+[[nodiscard]] static auto CalcWindowIntervals(
+    std::vector<std::uint32_t> error_sites) -> std::vector<Interval> {
+  auto dst = std::vector<Interval>(error_sites.size());
+  std::transform(
+      error_sites.cbegin(), error_sites.cend(), dst.begin(),
+      [](std::uint32_t const pos) -> std::pair<std::uint32_t, std::uint32_t> {
+        return {pos, pos};
+      });
+
+  auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
+  auto constexpr kDeadInterval = Interval{1, 0};
+
+  for (auto can_terminate = false; !can_terminate;) {
+    can_terminate = true;
+    for (auto i = 0; i < dst.size(); ++i) {
+      auto const lhs_dist =
+          i > 0 ? dst[i].last - dst[i - 1].first : kSentinelDist;
+      auto const rhs_dist =
+          i + 1 < dst.size() ? dst[i + 1].last - dst[i].first : kSentinelDist;
+
+      if (lhs_dist != kSentinelDist || rhs_dist != kSentinelDist) {
+        if (lhs_dist < rhs_dist) {
+          dst[i].first = dst[i - 1].first;
+          dst[i - 1] = kDeadInterval;
+          can_terminate = false;
+        } else {
+          dst[i].last = dst[i + 1].last;
+          std::swap(dst[i], dst[i + 1]);
+          dst[i] = kDeadInterval;
+          can_terminate = false;
+        }
+      }
+    }
+
+    dst.erase(std::stable_partition(dst.begin(), dst.end(),
+                                    [kDeadInterval](Interval interval) -> bool {
+                                      return interval != kDeadInterval;
+                                    }),
+              dst.end());
+  }
+
+  return dst;
+}
+
+[[nodiscard]] static auto WindowIntervalsToWindows(
+    std::uint32_t const read_len, std::vector<Interval> intervals)
+    -> std::vector<ReferenceWindow> {
+  auto dst = std::vector<ReferenceWindow>(intervals.size());
+
+  auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
+  for (auto i = 0U; i < intervals.size(); ++i) {
+    auto const default_lhs_shift = 14U;
+    auto const mid_point_lhs_shift =
+        (i > 0U ? (intervals[i].first - intervals[i - 1].last)
+                : intervals[i].first) /
+        2U;
+
+    auto const default_rhs_shift = 14U;
+    auto const mid_point_rhs_shift =
+        (i + 1U < intervals.size() ? intervals[i + 1].first - intervals[i].last
+                                   : read_len - 1U - intervals[i].last) /
+        2U;
+
+    auto const lhs_shift = std::min(default_lhs_shift, mid_point_lhs_shift);
+    auto const rhs_shift = std::min(default_rhs_shift, mid_point_rhs_shift);
+
+    dst[i].interval = {.first = intervals[i].first - lhs_shift,
+                       .last = intervals[i].last + rhs_shift};
+  }
+
+  return dst;
+}
+
+static auto BindReadSegmentsToWindows(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    std::vector<biosoup::Overlap> const& overlaps,
+    std::vector<EdlibAlignResult> const& edlib_results,
+    std::vector<ReferenceWindow>& windows) -> void {
+  auto const cmp = [](std::uint32_t const ovlp_start,
+                      ReferenceWindow const& ref_window) -> bool {
+    return ovlp_start < ref_window.interval.last;
+  };
+
+  for (auto i = 0U; i < overlaps.size(); ++i) {
+    auto win_idx = std::distance(
+        windows.begin(),
+        std::upper_bound(windows.begin(), windows.end(), overlaps[i].lhs_begin,
+                         [](std::uint32_t const ovlp_start,
+                            ReferenceWindow const& ref_window) -> bool {
+                           return ovlp_start < ref_window.interval.last;
+                         }));
+
+    if (win_idx == windows.size()) {
+      continue;
+    }
+
+    auto lhs_first = overlaps[i].lhs_begin;
+    auto rhs_first = overlaps[i].rhs_begin;
+
+    auto lhs_last = lhs_first;
+    auto rhs_last = rhs_first;
+    for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
+      if (lhs_last == windows[win_idx].interval.first) {
+        lhs_first = lhs_last;
+        rhs_first = rhs_last;
+      } else if (lhs_last == windows[win_idx].interval.last) {
+        auto aligned_interval = Interval{.first = rhs_first, .last = rhs_last};
+        if (IntervalLength(aligned_interval) >= 42U) {
+          windows[win_idx].aligned_segments.push_back(
+              AlignedSegment{.aligned_interval = aligned_interval,
+                             .bases = reads[overlaps[i].rhs_id]->InflateData(
+                                 rhs_first, rhs_last - rhs_first)});
+        }
+
+        ++win_idx;
+      }
+
+      lhs_last += (edlib_results[i].alignment[j] != 2);
+      rhs_last += (edlib_results[i].alignment[j] != 1);
+    }
+  }
+}
+
+[[nodiscard]] static auto CreateWindowsFromAlignments() 
+  -> std::vector<ReferenceWindow> {
+
+}
+
+// [[nodiscard]] static auto AlignReadsToWindows(
+//     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+//     std::vector<biosoup::Overlap> const& overlaps,
+//     std::uint32_t const global_coverage_estimate)
+//     -> std::vector<ReferenceWindow> {
+//   auto const query_id = overlaps.front().lhs_id;
+//   auto edlib_results = CalculateEdlibAlignments(reads, overlaps);
+//   auto coverage = CalculateCoverage(reads, overlaps, edlib_results);
+//   auto windows = WindowIntervalsToWindows(
+//       reads[query_id]->inflated_len,
+//       CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate)));
+//   BindReadSegmentsToWindows(reads, overlaps, edlib_results, windows);
+// 
+//   std::for_each(edlib_results.begin(), edlib_results.end(),
+//                 edlibFreeAlignResult);
+// 
+//   return windows;
+// }
 
 }  // namespace detail
 
@@ -410,70 +457,67 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
 
   {
     timer.Start();
-    auto alignments =
-        std::vector<std::vector<detail::AlignmentSummary>>(kNTargets);
 
-    auto align_futures = std::vector<std::future<detail::AlignmentSummary>>();
+    // for (auto i = 0U; i < kNTargets; ++i) {
+    //   auto const target_id = target_ids[i];
+    //   if (!ovlps[target_id].empty()) {
+    //     alignments[i].reserve(ovlps[target_id].size());
+    //     for (auto const& ovlp : ovlps[target_id]) {
+    //       align_futures.emplace_back(
+    //           state.thread_pool->Submit(detail::CompressedAlignment,
+    //                                     std::cref(src_reads),
+    //                                     std::cref(ovlp)));
+    //     }
+    //   }
+    // }
 
-    for (auto i = 0U; i < kNTargets; ++i) {
-      auto const target_id = target_ids[i];
-      if (!ovlps[target_id].empty()) {
-        alignments[i].reserve(ovlps[target_id].size());
-        for (auto const& ovlp : ovlps[target_id]) {
-          align_futures.emplace_back(
-              state.thread_pool->Submit(detail::CompressedAlignment,
-                                        std::cref(src_reads), std::cref(ovlp)));
-        }
-      }
-    }
+    // auto consensus_futures =
+    //     std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
+    // consensus_futures.reserve(kNTargets);
 
-    auto consensus_futures =
-        std::vector<std::future<std::unique_ptr<biosoup::NucleicAcid>>>();
-    consensus_futures.reserve(kNTargets);
+    // auto align_future_id = 0U;
+    // for (auto i = 0U; i < kNTargets; ++i) {
+    //   auto const target_id = target_ids[i];
+    //   for (auto ovlp_id = 0U; ovlp_id < ovlps[target_id].size(); ++ovlp_id) {
+    //     alignments[i].push_back(align_futures[align_future_id++].get());
+    //   }
 
-    auto align_future_id = 0U;
-    for (auto i = 0U; i < kNTargets; ++i) {
-      auto const target_id = target_ids[i];
-      for (auto ovlp_id = 0U; ovlp_id < ovlps[target_id].size(); ++ovlp_id) {
-        alignments[i].push_back(align_futures[align_future_id++].get());
-      }
+    //   consensus_futures.emplace_back(state.thread_pool->Submit(
+    //       [kCovgEstimate](std::unique_ptr<biosoup::NucleicAcid> const& read,
+    //                       std::vector<detail::AlignmentSummary>& alignments)
+    //           -> std::unique_ptr<biosoup::NucleicAcid> {
+    //         auto dst = detail::GenerateConsensus(
+    //             read, alignments, std::max(2U, kCovgEstimate / 3U));
 
-      consensus_futures.emplace_back(state.thread_pool->Submit(
-          [kCovgEstimate](std::unique_ptr<biosoup::NucleicAcid> const& read,
-                          std::vector<detail::AlignmentSummary>& alignments)
-              -> std::unique_ptr<biosoup::NucleicAcid> {
-            auto dst = detail::GenerateConsensus(
-                read, alignments, std::max(2U, kCovgEstimate / 3U));
+    //         alignments.clear();
+    //         return dst;
+    //       },
+    //       std::cref(src_reads[target_id]), std::ref(alignments[i])));
 
-            alignments.clear();
-            return dst;
-          },
-          std::cref(src_reads[target_id]), std::ref(alignments[i])));
+    //   if (i > 0 && (i & 127U) == 0U || i + 1U == kNTargets) {
+    //     fmt::print(stderr,
+    //                "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
+    //                "alignment futures",
+    //                timer.Lap(), i + 1U, kNTargets);
+    //   }
+    // }
 
-      if (i > 0 && (i & 127U) == 0U || i + 1U == kNTargets) {
-        fmt::print(stderr,
-                   "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
-                   "alignment futures",
-                   timer.Lap(), i + 1U, kNTargets);
-      }
-    }
+    // timer.Stop();
+    // fmt::print(stderr, "\n");
 
-    timer.Stop();
-    fmt::print(stderr, "\n");
+    // timer.Start();
+    // for (auto i = 0U; i < consensus_futures.size(); ++i) {
+    //   corrected_targets.push_back(consensus_futures[i].get());
+    //   if (i > 0U && (i & 127U) == 0U || i + 1U == kNTargets) {
+    //     fmt::print(stderr,
+    //                "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
+    //                "consensus_futures futures",
+    //                timer.Lap(), i + 1U, kNTargets);
+    //   }
+    // }
 
-    timer.Start();
-    for (auto i = 0U; i < consensus_futures.size(); ++i) {
-      corrected_targets.push_back(consensus_futures[i].get());
-      if (i > 0U && (i & 127U) == 0U || i + 1U == kNTargets) {
-        fmt::print(stderr,
-                   "\r[camel::ErrorCorrect]({:12.3f}) collected {} / {} "
-                   "consensus_futures futures",
-                   timer.Lap(), i + 1U, kNTargets);
-      }
-    }
-
-    timer.Stop();
-    fmt::print(stderr, "\n");
+    // timer.Stop();
+    // fmt::print(stderr, "\n");
   }
 
   {
