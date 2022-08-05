@@ -36,8 +36,6 @@ auto main(int argc, char** argv) -> int {
     ("f,filter", "filter percentage of most common minimizers",
       cxxopts::value<double>()->default_value("0.01"));
   options.add_options("serialization arguments")
-    ("s,serialization_dst", "destination folder for pile serialization",
-            cxxopts::value<std::string>()->default_value("./camel_piles"))
     ("l,log_dst", "destination for for logging information",
             cxxopts::value<std::string>()->default_value("./camel_log"))
     ("o,out", "output destination folder",
@@ -66,10 +64,7 @@ auto main(int argc, char** argv) -> int {
                        result["threads"].as<std::uint32_t>()),
                    .log_path = result["log_dst"].as<std::string>()};
 
-  auto const ser_dst_path =
-      std::filesystem::path(result["serialization_dst"].as<std::string>());
   auto const out_path = std::filesystem::path(result["out"].as<std::string>());
-
   if (std::filesystem::exists(state.log_path)) {
     std::filesystem::remove_all(state.log_path);
   }
