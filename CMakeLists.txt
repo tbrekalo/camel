@@ -36,7 +36,6 @@ list(APPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 option(CAMEL_BUILD_SHARED_LIBS "Build camel and it's dependencies as shared lib" OFF)
 option(CAMEL_BUILD_TESTS "Build tests" OFF)
 option(CAMEL_PACK "Include camel packaging info" OFF)
-option(CAMEL_BUILD_PYTHON "Build camel python bindings" OFF) 
 option(CAMEL_BUILD_EXE "Build camel executable" OFF)
 option(CAMEL_DEVEL_OPTS "Enable options used for development" OFF)
 
@@ -57,7 +56,6 @@ conan_cmake_configure(
     fmt/8.1.1
     # jemalloc/5.2.1
     tsl-robin-map/1.0.1
-    zstd/1.5.2
   GENERATORS 
     cmake_find_package)
 
@@ -69,7 +67,6 @@ conan_cmake_install(PATH_OR_REFERENCE .
 
 find_package(fmt)
 find_package(tsl-robin-map)
-find_package(zstd)
 
 FetchContent_Declare(
   bioparser
@@ -126,7 +123,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup thread_pool
   PRIVATE
-    bioparser edlib fmt::fmt ram spoa tsl::robin_map zstd::zstd)
+    bioparser edlib fmt::fmt ram spoa tsl::robin_map)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
