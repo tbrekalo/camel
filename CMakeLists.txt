@@ -103,7 +103,6 @@ FetchContent_MakeAvailable(bioparser biosoup edlib ram spoa thread_pool)
 # create main target
 set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/detail/serialization.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
   ${PROJECT_SOURCE_DIR}/src/camel/mapping.cc

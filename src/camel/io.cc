@@ -11,7 +11,6 @@
 
 #include "bioparser/fasta_parser.hpp"
 #include "bioparser/fastq_parser.hpp"
-#include "detail/serialization.h"
 #include "fmt/core.h"
 
 namespace camel {
