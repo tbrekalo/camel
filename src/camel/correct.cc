@@ -98,9 +98,8 @@ class NucleicView {
   static auto FetchReverseComplementCodeImpl(
       biosoup::NucleicAcid const* nucleic_acid, std::size_t pos) noexcept
       -> std::uint8_t {
-    pos = nucleic_acid->inflated_len - 1 - pos;
-    return (((nucleic_acid->deflated_data[pos >> 5] >> ((pos << 1) & 63)) & 3) ^
-            3);
+    return FetchCodeImpl(nucleic_acid, nucleic_acid->inflated_len - 1 - pos) ^
+           3;
   }
 
   biosoup::NucleicAcid const* nucleic_acid_;
@@ -165,7 +164,8 @@ class NucleicView {
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string> {
   auto const lhs_view = NucleicView(reads[ovlp.lhs_id].get(), false);
-  auto const rhs_view = NucleicView(reads[ovlp.rhs_id].get(), !ovlp.strand);
+  auto const rhs_view = NucleicView(reads[ovlp.rhs_id].get(),
+                                    /*is_reverse_complement = */ !ovlp.strand);
 
   auto lhs_str =
       lhs_view.InflateData(ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
@@ -192,7 +192,7 @@ class NucleicView {
     std::vector<EdlibAlignResult> const& edlib_results)
     -> std::vector<CoverageSignals> {
   auto const query_id = overlaps.front().lhs_id;
-  auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len);
+  auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len + 1U);
 
   for (auto i = 0U; i < reads[query_id]->inflated_len; ++i) {
     ++dst[i].signals[reads[query_id]->Code(i)];
@@ -206,6 +206,13 @@ class NucleicView {
     auto lhs_pos = overlaps[ovlp_idx].lhs_begin;
     auto rhs_pos = overlaps[ovlp_idx].rhs_begin;
     for (auto i = 0; i < edlib_res.alignmentLength; ++i) {
+      // if (lhs_pos >= reads[query_id]->inflated_len) {
+      //   fmt::print(stderr, "({} >= {}) ... (alignment[{} / {}] = {})\n",
+      //   lhs_pos,
+      //              reads[query_id]->inflated_len, i,
+      //              edlib_res.alignmentLength,
+      //              static_cast<int>(edlib_res.alignment[i]));
+      // }
       switch (edlib_res.alignment[i]) {
         case 0:  // match
         case 3:  // mismatch
@@ -218,7 +225,7 @@ class NucleicView {
           ++lhs_pos;
           break;
         case 2:  // insertion on the query
-          ++dst[lhs_pos].signals[CoverageSignals::kInsIdx];
+          // ++dst[lhs_pos].signals[CoverageSignals::kInsIdx];
           ++rhs_pos;
           break;
         default:
@@ -237,7 +244,6 @@ class NucleicView {
   auto const sig_sum =
       std::accumulate(covg.signals.cbegin(), covg.signals.cend(), 0UL,
                       std::plus<std::uint32_t>());
-
   auto const strong_base_threshold =
       static_cast<std::uint32_t>(std::round(strong_base_ratio * sig_sum));
   auto const indle_threshold =
@@ -444,26 +450,6 @@ static auto BindReadSegmentsToWindows(
   return windows;
 }
 
-// [[nodiscard]] static auto AlignReadsToWindows(
-//     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-//     std::vector<biosoup::Overlap> const& overlaps,
-//     std::uint32_t const global_coverage_estimate)
-//     -> std::vector<ReferenceWindow> {
-//   auto const query_id = overlaps.front().lhs_id;
-//   auto edlib_results = CalculateEdlibAlignments(reads, overlaps);
-//   auto coverage = CalculateCoverage(reads, overlaps, edlib_results);
-//   auto windows = WindowIntervalsToWindows(
-//       reads[query_id]->inflated_len,
-//       CalcWindowIntervals(CallErrorSites(coverage,
-//       global_coverage_estimate)));
-//   BindReadSegmentsToWindows(reads, overlaps, edlib_results, windows);
-//
-//   std::for_each(edlib_results.begin(), edlib_results.end(),
-//                 edlibFreeAlignResult);
-//
-//   return windows;
-// }
-
 }  // namespace detail
 
 auto ErrorCorrect(State& state, MapCfg const map_cfg,
@@ -508,17 +494,14 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
 
     for (auto i = 0U; i < kNTargets; ++i) {
       auto const target_id = target_ids[i];
-      if (!overlaps[target_id].empty()) {
-        align_futures[i].resize(overlaps[target_id].size());
-        for (auto j = 0U; j < overlaps[target_id].size(); ++j) {
-          align_futures[i][j] = state.thread_pool->Submit(
-              [&src_reads,
-               &ovlp = overlaps[target_id][j]]() -> EdlibAlignResult {
-                auto const [lhs_str, rhs_str] =
-                    detail::ExtractSubstrings(src_reads, ovlp);
-                return detail::AlignStrings(lhs_str, rhs_str);
-              });
-        }
+      align_futures[i].resize(overlaps[target_id].size());
+      for (auto j = 0U; j < overlaps[target_id].size(); ++j) {
+        align_futures[i][j] = state.thread_pool->Submit(
+            [&src_reads, &ovlp = overlaps[target_id][j]]() -> EdlibAlignResult {
+              auto const [lhs_str, rhs_str] =
+                  detail::ExtractSubstrings(src_reads, ovlp);
+              return detail::AlignStrings(lhs_str, rhs_str);
+            });
       }
     }
 
@@ -529,12 +512,13 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
     auto n_transformed = 0U;
     for (auto i = 0U; i < kNTargets; ++i) {
       auto alignments = std::vector<EdlibAlignResult>(align_futures[i].size());
-      std::transform(align_futures[i].begin(), align_futures[i].end(),
+      std::transform(std::make_move_iterator(align_futures[i].begin()),
+                     std::make_move_iterator(align_futures[i].end()),
                      alignments.begin(),
                      std::mem_fn(&std::future<EdlibAlignResult>::get));
 
       n_transformed += alignments.size();
-      window_futures.emplace_back(state.thread_pool->Submit(
+      window_futures[i] = state.thread_pool->Submit(
           [&src_reads, &overlaps, kCovgEstimate,
            alignments = std::move(alignments)](
               std::uint32_t read_id) -> std::vector<detail::ReferenceWindow> {
@@ -546,7 +530,7 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
 
             return windows;
           },
-          target_ids[i]));
+          target_ids[i]);
 
       fmt::print(stderr,
                  "\r[camel::ErrorCorrect({:12.3f})] transformed {} / {} "
@@ -555,11 +539,11 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
     }
 
     decltype(align_futures){}.swap(align_futures);
-    fmt::print(
-        stderr,
-        "[camel::ErrorCorrect]({:12.3f}) transformed {} / {} alignment futures "
-        "to window tasks\n",
-        timer.Lap(), n_transformed, kNOverlaps);
+    fmt::print(stderr,
+               "\r[camel::ErrorCorrect]({:12.3f}) transformed {} / {} "
+               "alignment futures "
+               "to window tasks\n",
+               timer.Lap(), n_transformed, kNOverlaps);
 
     for (auto i = 0U; i < window_futures.size(); ++i) {
       window_futures[i].wait();
@@ -569,23 +553,12 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
                    "{} / {}",
                    timer.Lap(), i + 1, window_futures.size());
       }
-
-      fmt::print(stderr,
-                 "[camel::ErrorCorrect]({:12.3f}) collected window futures "
-                 "{} / {}\n",
-                 timer.Lap(), window_futures.size(), window_futures.size());
     }
 
-    // alignments.resize(kNOverlaps);
-    // auto align_futures_collected = 0U;
-    // for (auto i = 0U; i < kNTargets; ++i) {
-    //   alignments[i].resize(align_futures[i].size());
-    //   std::transform(align_futures[i].begin(), align_futures[i].end(),
-    //                  alignments[i].begin(),
-    //                  std::mem_fn(&std::future<EdlibAlignResult>::get));
-    //   align_futures_collected += alignments[i].size();
-
-    // }
+    fmt::print(stderr,
+               "\r[camel::ErrorCorrect]({:12.3f}) collected window futures "
+               "{} / {}\n",
+               timer.Lap(), window_futures.size(), window_futures.size());
   }
 
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n", timer.elapsed_time());
