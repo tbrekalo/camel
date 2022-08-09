@@ -139,17 +139,26 @@ auto FindOverlaps(
                     ovlps.end());
 
                 if (ovlps.size() > detail::kMxOvlps) {
-                  std::nth_element(ovlps.begin(),
-                                   ovlps.begin() + detail::kMxOvlps,
-                                   ovlps.end(),
-                                   [](biosoup::Overlap const& a,
-                                      biosoup::Overlap const& b) -> bool {
-                                     return detail::OverlapLength(a) >
-                                            detail::OverlapLength(b);
-                                   });
-                  decltype(ovlps)(ovlps.begin(),
-                                  ovlps.begin() + detail::kMxOvlps)
-                      .swap(ovlps);
+                  auto used_ids = tsl::robin_set<std::uint32_t>(
+                      detail::kMxOvlps);  // TODO: stack local
+                  auto temp = std::vector<biosoup::Overlap>();
+                  temp.reserve(detail::kMxOvlps);
+
+                  std::sort(ovlps.begin(), ovlps.end(),
+                            [](biosoup::Overlap const& a,
+                               biosoup::Overlap const& b) -> bool {
+                              return detail::OverlapLength(a) >
+                                     detail::OverlapLength(b);
+                            });
+
+                  for (auto i = 0U; i < ovlps.size(); ++i) {
+                    if (!used_ids.contains(ovlps[i].rhs_id)) {
+                      temp.push_back(ovlps[i]);
+                      used_ids.insert(ovlps[i].rhs_id);
+                    }
+                  }
+
+                  temp.swap(ovlps);
                 }
 
                 return ovlps;
