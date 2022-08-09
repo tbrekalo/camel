@@ -205,14 +205,11 @@ class NucleicView {
 
     auto lhs_pos = overlaps[ovlp_idx].lhs_begin;
     auto rhs_pos = overlaps[ovlp_idx].rhs_begin;
-    for (auto i = 0; i < edlib_res.alignmentLength; ++i) {
-      // if (lhs_pos >= reads[query_id]->inflated_len) {
-      //   fmt::print(stderr, "({} >= {}) ... (alignment[{} / {}] = {})\n",
-      //   lhs_pos,
-      //              reads[query_id]->inflated_len, i,
-      //              edlib_res.alignmentLength,
-      //              static_cast<int>(edlib_res.alignment[i]));
-      // }
+
+    auto i = 0;
+    for (; i < edlib_res.alignmentLength && edlib_res.alignment[i] == 2; ++i)
+      ; // skip initial insertion
+    for (; i < edlib_res.alignmentLength; ++i) {
       switch (edlib_res.alignment[i]) {
         case 0:  // match
         case 3:  // mismatch
@@ -225,7 +222,7 @@ class NucleicView {
           ++lhs_pos;
           break;
         case 2:  // insertion on the query
-          // ++dst[lhs_pos].signals[CoverageSignals::kInsIdx];
+          ++dst[lhs_pos - 1U].signals[CoverageSignals::kInsIdx];
           ++rhs_pos;
           break;
         default:
@@ -432,6 +429,16 @@ static auto BindReadSegmentsToWindows(
       rhs_last += (edlib_results[i].alignment[j] != 1);
     }
   }
+}
+
+static auto LogSnpDistr(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    std::vector<biosoup::Overlap> const& overlaps,
+    std::vector<EdlibAlignResult> const& edlib_results,
+    std::vector<CoverageSignals> const& coverage,
+    std::uint32_t const global_coverage_estimate) -> void {
+  auto const query_id = overlaps.front().lhs_id;
+  auto snp_sites = std::vector<std::uint32_t>();
 }
 
 [[nodiscard]] static auto CreateWindowsFromAlignments(
