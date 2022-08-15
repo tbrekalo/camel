@@ -437,21 +437,10 @@ static auto BindReadSegmentsToWindows(
     auto lhs_curr = lhs_first;
     auto rhs_curr = rhs_first;
 
-    auto updateds =
-        std::vector<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t,
-                               bool, std::uint32_t, std::uint32_t>>();
-
-    updateds.emplace_back(lhs_first, lhs_curr, win_idx, 0,
-                          windows[win_idx].interval.first,
-                          windows[win_idx].interval.last);
-
     auto const rhs_view =
         NucleicView(reads[overlaps[i].rhs_id].get(), !overlaps[i].strand);
     for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
       if (lhs_curr == windows[win_idx].interval.first) {
-        updateds.emplace_back(lhs_first, lhs_curr, win_idx, 0,
-                              windows[win_idx].interval.first,
-                              windows[win_idx].interval.last);
         lhs_first = lhs_curr;
         rhs_first = rhs_curr;
       }
@@ -460,17 +449,6 @@ static auto BindReadSegmentsToWindows(
       rhs_curr += (edlib_results[i].alignment[j] != 1);
 
       if (lhs_curr == windows[win_idx].interval.last) {
-        updateds.emplace_back(lhs_first, lhs_curr, win_idx, 1,
-                              windows[win_idx].interval.first,
-                              windows[win_idx].interval.last);
-        if (windows[win_idx].interval.first > lhs_first) {
-          fmt::print(stderr, "\n[{}, ({}, {})] <- ({}, {}) .. {}\n",
-                     overlaps[i].lhs_begin, lhs_first, lhs_curr,
-                     windows[win_idx].interval.first,
-                     windows[win_idx].interval.last, updateds);
-          std::quick_exit(EXIT_FAILURE);
-        }
-
         windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
             .alignment_local_interval = LocalizeInterval(
                 windows[win_idx].interval.first, {lhs_first, lhs_curr}),
@@ -809,10 +787,11 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
 
       dst.push_back(std::make_unique<biosoup::NucleicAcid>(
           src_reads[target_ids[read_idx]]->name, consensus));
-      fmt::print(stderr,
-                 "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {} / "
-                 "{} reads",
-                 timer.Lap(), read_idx + 1, ref_windows.size());
+      fmt::print(
+          stderr,
+          "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {} / "
+          "{} reads",
+          timer.Lap(), read_idx + 1, ref_windows.size());
       spoa_futures.clear();
     }
     fmt::print(stderr,
