@@ -28,7 +28,11 @@ namespace detail {
 
 static auto constexpr kSqrt5 = 2.2360679775;
 static auto constexpr kShrinkShift = 3U;
-static auto constexpr kWinLength = 420U;
+static auto constexpr kWinLength = 240U;
+
+static auto constexpr kWinPadding = 13U;
+static auto constexpr kAllowedFuzzPercent = 0.05;
+static auto constexpr kSmallWindowPercent = 0.05;
 
 struct CoverageSignals {
   std::array<std::uint16_t, 6U> signals;
@@ -55,8 +59,13 @@ constexpr auto IntervalLength(Interval const intv) -> std::uint32_t {
   return intv.last - intv.first;
 }
 
+constexpr auto LocalizeInterval(std::uint32_t const pos, Interval const intv)
+    -> Interval {
+  return {.first = intv.first - pos, .last = intv.last - pos};
+}
+
 struct AlignedSegment {
-  Interval aligned_interval;
+  Interval alignment_local_interval;
   std::string bases;
 };
 
@@ -64,6 +73,10 @@ struct ReferenceWindow {
   Interval interval;
   std::vector<AlignedSegment> aligned_segments;
 };
+
+auto operator<<(std::ostream& ostrm, ReferenceWindow ref_win) -> std::ostream& {
+  return ostrm << IntervalLength(ref_win.interval);
+}
 
 class NucleicView {
  public:
@@ -243,7 +256,7 @@ class NucleicView {
                       std::plus<std::uint32_t>());
 
   if (*std::max_element(covg.signals.cbegin(), covg.signals.cend()) <
-      covg_estimate / 2) {
+      covg_estimate / 3) {
     return false;
   }
 
@@ -262,7 +275,7 @@ class NucleicView {
   }
 
   for (auto i = 4U; dst && i < 6U; ++i) {
-    if (covg.signals[i] > indle_ratio) {
+    if (covg.signals[i] > indle_threshold) {
       dst = false;
     }
   }
@@ -290,7 +303,7 @@ class NucleicView {
 [[nodiscard]] static auto IsErrorSite(CoverageSignals const& covg,
                                       std::uint32_t const covg_estimate)
     -> bool {
-  return IsUnstableSite(covg, covg_estimate, 0.9, 0.25);
+  return IsUnstableSite(covg, covg_estimate, 0.95, 0.25);
 }
 
 template <class PredFn>
@@ -338,22 +351,27 @@ template <class PredFn>
   for (auto can_terminate = false; !can_terminate;) {
     can_terminate = true;
     for (auto i = 0; i < dst.size(); ++i) {
-      auto const lhs_dist =
-          i > 0 ? dst[i].last - dst[i - 1].first : kSentinelDist;
-      auto const rhs_dist =
-          i + 1 < dst.size() ? dst[i + 1].last - dst[i].first : kSentinelDist;
+      auto const lhs_dist = i > 0 && dst[i - 1] != kDeadInterval
+                                ? dst[i].last - dst[i - 1].first
+                                : kSentinelDist;
+      auto const rhs_dist = i + 1 < dst.size() && dst[i + 1] != kDeadInterval
+                                ? dst[i + 1].last - dst[i].first
+                                : kSentinelDist;
 
-      if (lhs_dist != kSentinelDist || rhs_dist != kSentinelDist) {
+      if (lhs_dist <= kWinLength || rhs_dist <= kWinLength) {
         if (lhs_dist < rhs_dist) {
           dst[i].first = dst[i - 1].first;
           dst[i - 1] = kDeadInterval;
-          can_terminate = false;
         } else {
           dst[i].last = dst[i + 1].last;
           std::swap(dst[i], dst[i + 1]);
+
           dst[i] = kDeadInterval;
-          can_terminate = false;
+          if (i > 0) {
+            std::swap(dst[i - 1], dst[i]);
+          }
         }
+        can_terminate = false;
       }
     }
 
@@ -371,7 +389,6 @@ template <class PredFn>
     std::uint32_t const read_len, std::vector<Interval> intervals)
     -> std::vector<ReferenceWindow> {
   auto dst = std::vector<ReferenceWindow>(intervals.size());
-
   auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
   for (auto i = 0U; i < intervals.size(); ++i) {
     auto const default_lhs_shift = 14U;
@@ -401,11 +418,6 @@ static auto BindReadSegmentsToWindows(
     std::vector<biosoup::Overlap> const& overlaps,
     std::vector<EdlibAlignResult> const& edlib_results,
     std::vector<ReferenceWindow>& windows) -> void {
-  auto const cmp = [](std::uint32_t const ovlp_start,
-                      ReferenceWindow const& ref_window) -> bool {
-    return ovlp_start < ref_window.interval.last;
-  };
-
   for (auto i = 0U; i < overlaps.size(); ++i) {
     auto win_idx = std::distance(
         windows.begin(),
@@ -422,30 +434,52 @@ static auto BindReadSegmentsToWindows(
     auto lhs_first = overlaps[i].lhs_begin;
     auto rhs_first = overlaps[i].rhs_begin;
 
-    auto lhs_last = lhs_first;
-    auto rhs_last = rhs_first;
+    auto lhs_curr = lhs_first;
+    auto rhs_curr = rhs_first;
+
+    auto updateds =
+        std::vector<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t,
+                               bool, std::uint32_t, std::uint32_t>>();
+
+    updateds.emplace_back(lhs_first, lhs_curr, win_idx, 0,
+                          windows[win_idx].interval.first,
+                          windows[win_idx].interval.last);
 
     auto const rhs_view =
         NucleicView(reads[overlaps[i].rhs_id].get(), !overlaps[i].strand);
-    for (auto j = 0U;
-         win_idx < windows.size() && j < edlib_results[i].alignmentLength;
-         ++j) {
-      if (lhs_last == windows[win_idx].interval.first) {
-        lhs_first = lhs_last;
-        rhs_first = rhs_last;
-      } else if (lhs_last == windows[win_idx].interval.last) {
-        auto aligned_interval = Interval{.first = rhs_first, .last = rhs_last};
-        if (IntervalLength(aligned_interval) >= 42U) {
-          windows[win_idx].aligned_segments.push_back(AlignedSegment{
-              .aligned_interval = aligned_interval,
-              .bases = rhs_view.InflateData(rhs_first, rhs_last - rhs_first)});
-        }
-
-        ++win_idx;
+    for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
+      if (lhs_curr == windows[win_idx].interval.first) {
+        updateds.emplace_back(lhs_first, lhs_curr, win_idx, 0,
+                              windows[win_idx].interval.first,
+                              windows[win_idx].interval.last);
+        lhs_first = lhs_curr;
+        rhs_first = rhs_curr;
       }
 
-      lhs_last += (edlib_results[i].alignment[j] != 2);
-      rhs_last += (edlib_results[i].alignment[j] != 1);
+      lhs_curr += (edlib_results[i].alignment[j] != 2);
+      rhs_curr += (edlib_results[i].alignment[j] != 1);
+
+      if (lhs_curr == windows[win_idx].interval.last) {
+        updateds.emplace_back(lhs_first, lhs_curr, win_idx, 1,
+                              windows[win_idx].interval.first,
+                              windows[win_idx].interval.last);
+        if (windows[win_idx].interval.first > lhs_first) {
+          fmt::print(stderr, "\n[{}, ({}, {})] <- ({}, {}) .. {}\n",
+                     overlaps[i].lhs_begin, lhs_first, lhs_curr,
+                     windows[win_idx].interval.first,
+                     windows[win_idx].interval.last, updateds);
+          std::quick_exit(EXIT_FAILURE);
+        }
+
+        windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
+            .alignment_local_interval = LocalizeInterval(
+                windows[win_idx].interval.first, {lhs_first, lhs_curr}),
+            .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first)});
+
+        if (++win_idx >= windows.size()) {
+          break;
+        }
+      }
     }
   }
 }
@@ -538,7 +572,7 @@ static auto KeepHaploidOverlaps(
     }
 
     std::swap(updated_ovlps, overlaps);
-    std::swap(edlib_results, updated_edlib_results);
+    std::swap(updated_edlib_results, edlib_results);
   }
 }
 
@@ -557,6 +591,7 @@ static auto KeepHaploidOverlaps(
   auto windows = WindowIntervalsToWindows(
       reads[query_id]->inflated_len,
       CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate)));
+
   BindReadSegmentsToWindows(reads, overlaps, edlib_results, windows);
 
   std::for_each(edlib_results.begin(), edlib_results.end(),
@@ -651,15 +686,19 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
                  timer.Lap(), n_transformed, kNOverlaps);
     }
 
-    decltype(align_futures){}.swap(align_futures);
     fmt::print(stderr,
                "\r[camel::ErrorCorrect]({:12.3f}) transformed {} / {} "
                "alignment futures "
                "to window tasks\n",
                timer.Lap(), n_transformed, kNOverlaps);
+    decltype(align_futures){}.swap(align_futures);
+
+    auto ref_windows = std::vector<std::vector<detail::ReferenceWindow>>();
+    ref_windows.reserve(window_futures.size());
 
     for (auto i = 0U; i < window_futures.size(); ++i) {
-      window_futures[i].wait();
+      ref_windows.push_back(window_futures[i].get());
+
       if ((i & 127) == 0U) {
         fmt::print(stderr,
                    "\r[camel::ErrorCorrect]({:12.3f}) collected window futures "
@@ -671,7 +710,115 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
     fmt::print(stderr,
                "\r[camel::ErrorCorrect]({:12.3f}) collected window futures "
                "{} / {}\n",
-               timer.Lap(), window_futures.size(), window_futures.size());
+               timer.Stop(), window_futures.size(), window_futures.size());
+    decltype(window_futures)().swap(window_futures);
+
+    auto alignment_engines =
+        tsl::robin_map<std::thread::id,
+                       std::unique_ptr<spoa::AlignmentEngine>>();
+
+    for (auto const [thread_id, _] : state.thread_pool->thread_map()) {
+      alignment_engines[thread_id] = spoa::AlignmentEngine::Create(
+          spoa::AlignmentType::kNW, correct_cfg.poa_cfg.match,
+          correct_cfg.poa_cfg.mismatch, correct_cfg.poa_cfg.gap);
+    }
+
+    timer.Start();
+    dst.reserve(window_futures.size());
+    auto spoa_futures = std::vector<std::future<void>>();
+
+    for (auto read_idx = 0U; read_idx < ref_windows.size(); ++read_idx) {
+      auto graphs = std::vector<spoa::Graph>(ref_windows[read_idx].size());
+      auto backbone = src_reads[target_ids[read_idx]]->InflateData();
+
+      for (auto win_idx = 0U; win_idx < ref_windows[read_idx].size();
+           ++win_idx) {
+        graphs[win_idx].AddAlignment(
+            spoa::Alignment(),
+            backbone.substr(ref_windows[read_idx][win_idx].interval.first,
+                            detail::IntervalLength(
+                                ref_windows[read_idx][win_idx].interval)));
+      }
+
+      for (auto win_idx = 0U; win_idx < ref_windows[read_idx].size();
+           ++win_idx) {
+        spoa_futures.emplace_back(state.thread_pool->Submit(
+            [&alignment_engines,
+             active_window = std::move(ref_windows[read_idx][win_idx]), &graphs,
+             win_idx]() -> void {
+              auto const& alignment_engine =
+                  alignment_engines[std::this_thread::get_id()];
+
+              auto const& [win_ref_intv, aligned_segments] = active_window;
+              auto const window_length = IntervalLength(win_ref_intv);
+
+              for (auto const& [alignment_interval, bases] : aligned_segments) {
+                auto const alignment_len = IntervalLength(alignment_interval);
+                if (alignment_len <
+                    window_length * detail::kSmallWindowPercent) {
+                  continue;
+                }
+
+                auto const legal_start =
+                    window_length * detail::kAllowedFuzzPercent;
+                auto const legal_end = window_length - legal_start;
+
+                auto alignment = spoa::Alignment();
+                if (alignment_interval.first <= legal_start &&
+                    legal_end <= alignment_interval.last) {
+                  alignment = alignment_engine->Align(bases, graphs[win_idx]);
+                } else {
+                  auto mapping = std::vector<spoa::Graph::Node const*>();
+                  auto subgraph = graphs[win_idx].Subgraph(
+                      alignment_interval.first, alignment_interval.last - 1,
+                      &mapping);
+
+                  alignment =
+                      alignment_engines[std::this_thread::get_id()]->Align(
+                          bases, subgraph);
+                  subgraph.UpdateAlignment(mapping, &alignment);
+                }
+
+                graphs[win_idx].AddAlignment(alignment, bases);
+              }
+            }));
+      }
+
+      auto consensus = std::string();
+      consensus.reserve(src_reads[target_ids[read_idx]]->inflated_len * 1.2);
+
+      for (auto i = 0; i < spoa_futures.size(); ++i) {
+        spoa_futures[i].wait();
+      }
+
+      {
+        auto prev = 0U;
+        for (auto win_idx = 0U; win_idx < spoa_futures.size(); ++win_idx) {
+          spoa_futures[win_idx].wait();
+          auto const& interval = ref_windows[read_idx][win_idx].interval;
+
+          consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
+                           std::next(backbone.begin(), interval.first));
+          consensus += graphs[win_idx].GenerateConsensus();
+          prev = interval.last;
+        }
+
+        consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
+                         backbone.end());
+      }
+
+      dst.push_back(std::make_unique<biosoup::NucleicAcid>(
+          src_reads[target_ids[read_idx]]->name, consensus));
+      fmt::print(stderr,
+                 "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {} / "
+                 "{} reads",
+                 timer.Lap(), read_idx + 1, ref_windows.size());
+      spoa_futures.clear();
+    }
+    fmt::print(stderr,
+               "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {} / "
+               "{} reads\n",
+               timer.Stop(), ref_windows.size(), ref_windows.size());
   }
 
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n", timer.elapsed_time());
