@@ -11,7 +11,6 @@
 
 #include "biosoup/timer.hpp"
 #include "camel/io.h"
-#include "camel/mapping.h"
 #include "detail/overlap.h"
 #include "edlib.h"
 #include "fmt/core.h"
@@ -580,16 +579,15 @@ static auto KeepHaploidOverlaps(
 
 }  // namespace detail
 
-auto ErrorCorrect(State& state, MapCfg const map_cfg,
-                  CorrectConfig const correct_cfg,
-                  std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads)
+auto ErrorCorrect(State& state, CorrectConfig const correct_cfg,
+                  std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads,
+                  std::vector<std::vector<biosoup::Overlap>> overlaps)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
   auto corrected_targets = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto timer = biosoup::Timer();
 
   timer.Start();
-  auto const overlaps = FindOverlaps(state, map_cfg, src_reads);
 
   auto target_ids = std::vector<std::uint32_t>();
   for (auto read_id = 0U; read_id < overlaps.size(); ++read_id) {
@@ -599,7 +597,7 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
   }
 
   auto const kNTargets = target_ids.size();
-  auto const kNContained = overlaps.size() - kNTargets;
+  auto const kNSupporting = overlaps.size() - kNTargets;
 
   auto const kNOverlaps = std::transform_reduce(
       overlaps.cbegin(), overlaps.cend(), 0UL, std::plus<std::size_t>(),
@@ -607,7 +605,10 @@ auto ErrorCorrect(State& state, MapCfg const map_cfg,
         return ovlps.size();
       });
 
-  timer.Stop();
+  fmt::print(
+      stderr,
+      "[camel::ErrorCorrect]({:12.3f}) (kNTargets, kNSupporting) = ({}, {})\n",
+      timer.Stop(), kNTargets, kNSupporting);
 
   timer.Start();
   auto const kCovgEstimate =
