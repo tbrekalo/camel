@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "biosoup/nucleic_acid.hpp"
+#include "biosoup/overlap.hpp"
 #include "camel/state.h"
 #include "thread_pool/thread_pool.hpp"
 
@@ -45,10 +46,18 @@ CAMEL_EXPORT auto StoreSequences(
  * @brief multithreaded sequence storage
  */
 CAMEL_EXPORT auto StoreSequences(
-  State& state,
-  std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-  std::filesystem::path const& dst_folder,
-  std::uint64_t dst_file_cap) -> void;
+    State& state,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
+    -> void;
+
+/**
+ * @brief loads overlaps, keeps the best one for each read
+ */
+CAMEL_EXPORT [[nodiscard]] auto LoadOverlaps(
+    std::filesystem::path const& paf_path,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads)
+    -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel
 
