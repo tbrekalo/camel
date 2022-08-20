@@ -13,7 +13,6 @@
 #include "camel/correct.h"
 #include "camel/detail/overlap.h"
 #include "camel/io.h"
-#include "camel/mapping.h"
 #include "camel/state.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
@@ -28,13 +27,6 @@ auto main(int argc, char** argv) -> int {
       cxxopts::Options("camel", "Camel is haplotype aware detection tool");
 
   /* clang-format off */
-  options.add_options("mapping arguments")
-    ("k,kmer", "kmer length, odd number between 3 and 31",
-      cxxopts::value<std::uint8_t>()->default_value("15"))
-    ("w,win_len", "window length",
-      cxxopts::value<std::uint8_t>()->default_value("9"))
-    ("f,filter", "filter percentage of most common minimizers",
-      cxxopts::value<double>()->default_value("0.01"));
   options.add_options("serialization arguments")
     ("l,log_dst", "destination for for logging information",
             cxxopts::value<std::string>()->default_value("./camel_log"))
@@ -51,10 +43,13 @@ auto main(int argc, char** argv) -> int {
       cxxopts::value<std::uint32_t>()->default_value("320"));
   options.add_options("utility arguments")
     ("t,threads", "number of threads avalable for execution",
-            cxxopts::value<std::uint32_t>())
-    ("paths", "input fastq reads", 
+            cxxopts::value<std::uint32_t>());
+  options.add_options("input")
+    ("overlaps", 
+      "overlaps path", cxxopts::value<std::string>())
+    ("reads", "input fastq reads", 
             cxxopts::value<std::vector<std::string>>());
-  options.parse_positional("paths");
+  options.parse_positional({"overlaps", "reads"});
   /* clang-format on */
 
   auto const result = options.parse(argc, argv);
@@ -77,48 +72,55 @@ auto main(int argc, char** argv) -> int {
 
   std::filesystem::create_directory(out_path);
 
-  auto paths = std::vector<std::filesystem::path>();
+  auto read_paths = std::vector<std::filesystem::path>();
+  auto overlaps_path =
+      std::filesystem::path(result["overlaps"].as<std::string>());
 
   {
-    auto paths_strs = result["paths"].as<std::vector<std::string>>();
+    auto paths_strs = result["reads"].as<std::vector<std::string>>();
     for (auto const& it : paths_strs) {
       auto it_path = std::filesystem::path(std::move(it));
       if (std::filesystem::is_regular_file(it_path)) {
-        paths.emplace_back(std::move(it_path));
+        read_paths.emplace_back(std::move(it_path));
       } else if (std::filesystem::is_directory(it_path)) {
         for (auto dir_entry : std::filesystem::recursive_directory_iterator(
                  std::move(it_path))) {
           if (std::filesystem::is_regular_file(dir_entry)) {
-            paths.emplace_back(std::move(dir_entry));
+            read_paths.emplace_back(std::move(dir_entry));
           }
         }
       }
     }
   }
 
-  decltype(paths)(std::make_move_iterator(paths.begin()),
-                  std::make_move_iterator(paths.end()))
-      .swap(paths);
+  decltype(read_paths)(std::make_move_iterator(read_paths.begin()),
+                       std::make_move_iterator(read_paths.end()))
+      .swap(read_paths);
 
   auto timer = biosoup::Timer();
 
   {
-    auto const map_cfg = camel::MapCfg(result["kmer"].as<std::uint8_t>(),
-                                       result["win_len"].as<std::uint8_t>(),
-                                       result["filter"].as<double>());
-
     auto const correct_cfg = camel::CorrectConfig{
         .poa_cfg = camel::POAConfig{},
         .correct_window = result["correct_window"].as<std::uint32_t>()};
 
     timer.Start();
-    auto reads = camel::LoadSequences(state, paths);
+    auto reads = camel::LoadSequences(state, read_paths);
     fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
                reads.size());
 
     timer.Start();
-    auto corrected_reads =
-        camel::ErrorCorrect(state, map_cfg, correct_cfg, std::move(reads));
+    auto overlaps = camel::LoadOverlaps(overlaps_path, reads);
+    auto const n_ovlps = std::transform_reduce(
+        overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
+        std::mem_fn(&std::vector<biosoup::Overlap>::size));
+
+    fmt::print(stderr, "[camel]({:12.3f}) loaded {} overlaps\n", timer.Stop(),
+               n_ovlps);
+
+    timer.Start();
+    auto corrected_reads = camel::ErrorCorrect(
+        state, correct_cfg, std::move(reads), std::move(overlaps));
     timer.Stop();
 
     camel::StoreSequences(state, corrected_reads, out_path, 1U << 28U);

@@ -265,10 +265,7 @@ auto LoadSequences(State& state,
     std::move(vec.begin(), vec.end(), std::back_inserter(dst));
   }
 
-  std::sort(dst.begin(), dst.end(),
-            [](auto const& lhs, auto const& rhs) -> bool {
-              return lhs->id < rhs->id;
-            });
+  std::sort(dst.begin(), dst.end(), detail::CmpNucleicAcidByName);
 
   // reindexing
   for (auto idx = 0U; idx < dst.size(); ++idx) {
@@ -318,16 +315,19 @@ auto LoadOverlaps(
 
       for (auto& ovlp_ptr : ovlps) {
         auto ovlp = transform_overlap(std::move(ovlp_ptr));
-        if (detail::OverlapError(ovlp) < 0.2 &&
-            detail::OverlapLength(best_ovlps[ovlp.rhs_id]) <
+        if (ovlp.lhs_id != ovlp.rhs_id && detail::OverlapLength(ovlp) > 1280U &&
+            detail::OverlapError(ovlp) < 0.2 &&
+            detail::OverlapLength(best_ovlps[ovlp.lhs_id]) <
                 detail::OverlapLength(ovlp)) {
-          best_ovlps[ovlp.rhs_id] = ovlp;
+          best_ovlps[ovlp.lhs_id] = ovlp;
         }
       }
     }
-
-    for (auto const& it : best_ovlps) {
-      dst[it.lhs_id].push_back(it);
+    for (auto const& ovlp : best_ovlps) {
+      if (detail::OverlapLength(ovlp) > 0U) {
+        auto const rev_ovlp = detail::ReverseOverlap(ovlp);
+        dst[ovlp.rhs_id].push_back(detail::ReverseOverlap(ovlp));
+      }
     }
   }
 
