@@ -85,20 +85,22 @@ FetchContent_Declare(
   GIT_TAG v1.2.7)
 
 FetchContent_Declare(
-  ram
-  GIT_REPOSITORY https://github.com/lbcb-sci/ram
-  GIT_TAG 2.1.1)
-
-FetchContent_Declare(
   spoa
   GIT_REPOSITORY https://github.com/rvaser/spoa
   GIT_TAG 4.0.7)
 
-FetchContent_MakeAvailable(bioparser biosoup edlib ram spoa)
+FetchContent_MakeAvailable(bioparser biosoup edlib spoa)
 
 # create main target
 set(camel_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/alignment.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/call_sites.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/correct.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/coverage.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/interval.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/nucleic_view.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/window.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
   ${PROJECT_SOURCE_DIR}/src/camel/io.cc)
@@ -116,8 +118,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup
   PRIVATE
-    bioparser edlib fmt::fmt ram spoa TBB::tbb tsl::robin_map)
-
+    bioparser edlib fmt::fmt spoa TBB::tbb tsl::robin_map)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
