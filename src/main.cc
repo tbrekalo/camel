@@ -11,14 +11,9 @@
 
 #include "biosoup/timer.hpp"
 #include "camel/correct.h"
-#include "camel/detail/overlap.h"
 #include "camel/io.h"
-#include "camel/state.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
-#include "fmt/ostream.h"
-// #include "jemalloc/jemalloc.h"
-#include "thread_pool/thread_pool.hpp"
 
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
 
@@ -28,8 +23,6 @@ auto main(int argc, char** argv) -> int {
 
   /* clang-format off */
   options.add_options("serialization arguments")
-    ("l,log_dst", "destination for for logging information",
-            cxxopts::value<std::string>()->default_value("./camel_log"))
     ("o,out", "output destination folder",
       cxxopts::value<std::string>()->default_value("./camel_out"));
   options.add_options("correction arguments")
@@ -39,7 +32,7 @@ auto main(int argc, char** argv) -> int {
       cxxopts::value<std::int8_t>()->default_value("-5"))
     ("g,gap", "gap penalty (must be nagative)",
       cxxopts::value<std::int8_t>()->default_value("-4"))
-    ("c,correct_window", "targeted correction window len",
+    ("w,window_length", "targeted correction window len",
       cxxopts::value<std::uint32_t>()->default_value("320"));
   options.add_options("utility arguments")
     ("t,threads", "number of threads avalable for execution",
@@ -54,17 +47,10 @@ auto main(int argc, char** argv) -> int {
 
   auto const result = options.parse(argc, argv);
 
-  auto state =
-      camel::State{.thread_pool = std::make_shared<thread_pool::ThreadPool>(
-                       result["threads"].as<std::uint32_t>()),
-                   .log_path = result["log_dst"].as<std::string>()};
-
+  auto const n_threads = result["threads"].as<std::uint32_t>();
   auto const out_path = std::filesystem::path(result["out"].as<std::string>());
-  if (std::filesystem::exists(state.log_path)) {
-    std::filesystem::remove_all(state.log_path);
-  }
 
-  std::filesystem::create_directory(state.log_path);
+  auto task_arena = tbb::task_arena(n_threads);
 
   if (std::filesystem::exists(out_path)) {
     std::filesystem::remove_all(out_path);
@@ -102,10 +88,10 @@ auto main(int argc, char** argv) -> int {
   {
     auto const correct_cfg = camel::CorrectConfig{
         .poa_cfg = camel::POAConfig{},
-        .correct_window = result["correct_window"].as<std::uint32_t>()};
+        .correct_window = result["window_length"].as<std::uint32_t>()};
 
     timer.Start();
-    auto reads = camel::LoadSequences(state, read_paths);
+    auto reads = camel::LoadSequences(task_arena, read_paths);
     fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
                reads.size());
 
@@ -120,10 +106,10 @@ auto main(int argc, char** argv) -> int {
 
     timer.Start();
     auto corrected_reads = camel::ErrorCorrect(
-        state, correct_cfg, std::move(reads), std::move(overlaps));
+        task_arena, correct_cfg, std::move(reads), std::move(overlaps));
     timer.Stop();
 
-    camel::StoreSequences(state, corrected_reads, out_path, 1U << 28U);
+    camel::StoreSequences(task_arena, corrected_reads, out_path, 1U << 28U);
   }
 
   fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());

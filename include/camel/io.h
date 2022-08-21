@@ -5,10 +5,9 @@
 #include <memory>
 #include <vector>
 
+#include "tbb/task_arena.h"
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
-#include "camel/state.h"
-#include "thread_pool/thread_pool.hpp"
 
 /* export header */
 #include "camel/export.h"
@@ -32,21 +31,22 @@ CAMEL_EXPORT [[nodiscard]] auto LoadSequences(std::filesystem::path const& path)
  *
  */
 CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
-    State& state, std::vector<std::filesystem::path> const& paths)
+      tbb::task_arena& task_arena,
+      std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
 /**
  * @brief multithreaded sequence storage
  */
 CAMEL_EXPORT auto StoreSequences(
-    State& state,
+    tbb::task_arena& task_arena,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder) -> void;
 /**
  * @brief multithreaded sequence storage
  */
 CAMEL_EXPORT auto StoreSequences(
-    State& state,
+    tbb::task_arena& task_arena,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
     -> void;

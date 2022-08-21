@@ -3,6 +3,7 @@
 #include <array>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -14,6 +15,11 @@
 #include "bioparser/paf_parser.hpp"
 #include "detail/overlap.h"
 #include "fmt/core.h"
+#include "tbb/concurrent_vector.h"
+#include "tbb/parallel_for.h"
+#include "tbb/parallel_for_each.h"
+#include "tbb/parallel_sort.h"
+#include "tbb/task_group.h"
 #include "tsl/robin_map.h"
 
 namespace camel {
@@ -148,14 +154,15 @@ auto LoadSequences(std::filesystem::path const& path)
 }
 
 auto StoreSequences(
-    State& state,
+    tbb::task_arena& task_arena,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder) -> void {
-  StoreSequences(state, seqs, dst_folder, detail::kDefaultSeqStorageFileSz);
+  StoreSequences(task_arena, seqs, dst_folder,
+                 detail::kDefaultSeqStorageFileSz);
 }
 
 auto StoreSequences(
-    State& state,
+    tbb::task_arena& task_arena,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
     -> void {
@@ -210,71 +217,60 @@ auto StoreSequences(
     impl(ofstrm, seq);
   };
 
-  auto ser_futures = std::vector<std::future<void>>();
-
   {
-    auto batch_id = 0U;
-    for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
-      auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
-      ser_futures.emplace_back(state.thread_pool->Submit(
-          [&dst_folder, is_fasta, store_fn](
-              std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-                  first,
-              std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-                  last,
-              std::uint32_t batch_id) -> void {
-            auto const dst_file_path =
-                dst_folder / (fmt::format("corrected_batch_{:04d}", batch_id) +
-                              (is_fasta ? ".fa" : ".fq"));
+    task_arena.execute([&]() -> void {
+      auto batch_id = 0U;
+      auto task_group = tbb::task_group();
+      for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
+        auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
+        task_group.run([&dst_folder, is_fasta, store_fn, first, last,
+                        batch_id]() -> void {
+          auto local_first = first;
+          auto local_last = last;
+          auto const dst_file_path =
+              dst_folder / (fmt::format("corrected_batch_{:04d}", batch_id) +
+                            (is_fasta ? ".fa" : ".fq"));
 
-            auto ofstrm =
-                std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
+          auto ofstrm =
+              std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
 
-            for (; first != last; ++first) {
-              store_fn(ofstrm, *first);
-            }
-          },
-          first, last, batch_id));
+          for (; local_first != local_last; ++local_first) {
+            store_fn(ofstrm, *first);
+          }
+        });
 
-      first = last;
-    }
+        first = last;
+      }
+
+      task_group.wait();
+    });
   }
-
-  std::for_each(ser_futures.begin(), ser_futures.end(),
-                std::mem_fn(&std::future<void>::get));
 }
 
-auto LoadSequences(State& state,
+auto LoadSequences(tbb::task_arena& task_arena,
                    std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
-  auto parse_futures = std::vector<
-      std::future<std::vector<std::unique_ptr<biosoup::NucleicAcid>>>>();
-  parse_futures.reserve(paths.size());
-
-  std::transform(
-      paths.cbegin(), paths.cend(), std::back_inserter(parse_futures),
-      [&thread_pool = state.thread_pool](std::filesystem::path const& path) {
-        return thread_pool->Submit(
-            [](std::filesystem::path const& p) { return LoadSequences(p); },
-            path);
-      });
-
+  auto buff_vec =
+      tbb::concurrent_vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-  for (auto& it : parse_futures) {
-    auto&& vec = it.get();
-    std::move(vec.begin(), vec.end(), std::back_inserter(dst));
-  }
 
-  std::sort(dst.begin(), dst.end(), detail::CmpNucleicAcidByName);
+  task_arena.execute([&buff_vec, &dst, &paths]() -> void {
+    tbb::parallel_for_each(
+        paths, [&buff_vec](std::filesystem::path const& path) -> void {
+          for (auto& seq : LoadSequences(path)) {
+            buff_vec.push_back(std::move(seq));
+          }
+        });
 
-  // reindexing
-  for (auto idx = 0U; idx < dst.size(); ++idx) {
-    dst[idx]->id = idx;
-  }
+    // reindexing
+    tbb::parallel_sort(buff_vec);
+    tbb::parallel_for(
+        0U, static_cast<std::uint32_t>(buff_vec.size()),
+        [&](std::uint32_t idx) -> void { buff_vec[idx]->id = idx; });
+  });
 
-  decltype(dst)(std::make_move_iterator(dst.begin()),
-                std::make_move_iterator(dst.end()))
-      .swap(dst);
+  dst.reserve(buff_vec.size());
+  std::move(buff_vec.begin(), buff_vec.end(), std::back_inserter(dst));
 
   return dst;
 }
@@ -323,6 +319,7 @@ auto LoadOverlaps(
         }
       }
     }
+
     for (auto const& ovlp : best_ovlps) {
       if (detail::OverlapLength(ovlp) > 0U) {
         auto const rev_ovlp = detail::ReverseOverlap(ovlp);

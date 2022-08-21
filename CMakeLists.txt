@@ -16,8 +16,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 # get conan
 if(NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
   message(STATUS "Downloading conan.cmake from https://github.com/conan-io/cmake-conan")
-  file(DOWNLOAD "https://raw.githubusercontent.com/conan-io/cmake-conan/develop/conan.cmake"
-  "${CMAKE_BINARY_DIR}/conan.cmake"
+  file(DOWNLOAD "https://raw.githubusercontent.com/conan-io/cmake-conan/0.18.1/conan.cmake"
+                "${CMAKE_BINARY_DIR}/conan.cmake"
                 TLS_VERIFY ON)
 endif()
 
@@ -54,7 +54,7 @@ conan_cmake_configure(
   REQUIRES 
     cxxopts/3.0.0 
     fmt/8.1.1
-    # jemalloc/5.2.1
+    tbb/2020.3
     tsl-robin-map/1.0.1
   GENERATORS 
     cmake_find_package)
@@ -67,6 +67,7 @@ conan_cmake_install(PATH_OR_REFERENCE .
 
 find_package(fmt)
 find_package(tsl-robin-map)
+find_package(TBB REQUIRED)
 
 FetchContent_Declare(
   bioparser
@@ -93,20 +94,14 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/rvaser/spoa
   GIT_TAG 4.0.7)
 
-FetchContent_Declare(
-  thread_pool
-  GIT_REPOSITORY https://github.com/rvaser/thread_pool.git
-  GIT_TAG 4.0.0)
-
-FetchContent_MakeAvailable(bioparser biosoup edlib ram spoa thread_pool)
+FetchContent_MakeAvailable(bioparser biosoup edlib ram spoa)
 
 # create main target
 set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/io.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/state.cc)
+  ${PROJECT_SOURCE_DIR}/src/camel/io.cc)
 
 add_library(camel ${camel_SOURCES})
 add_library(${PROJECT_NAME}::camel ALIAS camel)
@@ -119,9 +114,10 @@ target_include_directories(camel
 target_compile_features(camel PUBLIC cxx_std_17)
 target_link_libraries(camel
   PUBLIC
-    biosoup thread_pool
+    biosoup
   PRIVATE
-    bioparser edlib fmt::fmt ram spoa tsl::robin_map)
+    bioparser edlib fmt::fmt ram spoa TBB::tbb tsl::robin_map)
+
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
@@ -141,12 +137,10 @@ target_include_directories(camel PUBLIC
 
 if (CAMEL_BUILD_EXE) 
   find_package(cxxopts)
-  # find_package(jemalloc)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc) 
   target_link_libraries(camel_exe
     PRIVATE 
       camel cxxopts::cxxopts 
-      # jemalloc::jemalloc 
       fmt::fmt)
 endif ()
