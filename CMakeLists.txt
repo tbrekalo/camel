@@ -54,7 +54,7 @@ conan_cmake_configure(
   REQUIRES 
     cxxopts/3.0.0 
     fmt/8.1.1
-    tbb/2020.3
+    onetbb/2021.3.0
     tsl-robin-map/1.0.1
   GENERATORS 
     cmake_find_package)
@@ -67,7 +67,7 @@ conan_cmake_install(PATH_OR_REFERENCE .
 
 find_package(fmt)
 find_package(tsl-robin-map)
-find_package(TBB REQUIRED)
+find_package(TBB)
 
 FetchContent_Declare(
   bioparser
@@ -116,9 +116,9 @@ target_include_directories(camel
 target_compile_features(camel PUBLIC cxx_std_17)
 target_link_libraries(camel
   PUBLIC
-    biosoup
+    biosoup TBB::tbb
   PRIVATE
-    bioparser edlib fmt::fmt spoa TBB::tbb tsl::robin_map)
+    bioparser edlib fmt::fmt spoa tsl::robin_map)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)
