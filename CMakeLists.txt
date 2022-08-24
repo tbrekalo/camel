@@ -55,6 +55,7 @@ conan_cmake_configure(
     cxxopts/3.0.0 
     fmt/8.1.1
     onetbb/2021.3.0
+    span-lite/0.10.3
     tsl-robin-map/1.0.1
   GENERATORS 
     cmake_find_package)
@@ -66,6 +67,7 @@ conan_cmake_install(PATH_OR_REFERENCE .
                     SETTINGS ${settings})
 
 find_package(fmt)
+find_package(span-lite)
 find_package(tsl-robin-map)
 find_package(TBB)
 
@@ -100,6 +102,7 @@ set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/interval.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/nucleic_view.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
+  ${PROJECT_SOURCE_DIR}/src/camel/detail/task_queue.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/window.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
@@ -118,7 +121,7 @@ target_link_libraries(camel
   PUBLIC
     biosoup TBB::tbb
   PRIVATE
-    bioparser edlib fmt::fmt spoa tsl::robin_map)
+    bioparser edlib fmt::fmt nonstd::span-lite spoa tsl::robin_map)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)

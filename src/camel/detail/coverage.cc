@@ -1,12 +1,14 @@
 #include "coverage.h"
 
+#include "tbb/parallel_for.h"
+
 namespace camel::detail {
 
 static auto constexpr kShrinkShift = 3U;
 
-[[nodiscard]] auto ReadMedianCoverageEstimate(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<std::vector<biosoup::Overlap>> const& overlaps,
+[[nodiscard]] static auto ReadMedianCoverageEstimate(
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
+    nonstd::span<std::vector<biosoup::Overlap>> const& overlaps,
     std::uint32_t const read_id) -> std::uint16_t {
   auto pile = std::vector<std::uint16_t>(
       (reads[read_id]->inflated_len >> kShrinkShift) + 2U);
@@ -36,10 +38,30 @@ static auto constexpr kShrinkShift = 3U;
   return pile[pile.size() / 2];
 }
 
+auto EstimateCoverage(
+    tbb::task_arena& task_arena,
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<std::vector<biosoup::Overlap>> overlaps)
+    -> std::uint16_t {
+  return task_arena.execute([&reads, &overlaps]() -> std::uint16_t {
+    auto covg_medians = std::vector<std::uint16_t>(reads.size());
+    tbb::parallel_for(0UL, reads.size(), [&](std::size_t read_idx) -> void {
+      covg_medians[read_idx] =
+          detail::ReadMedianCoverageEstimate(reads, overlaps, read_idx);
+    });
+
+    std::nth_element(covg_medians.begin(),
+                     covg_medians.begin() + covg_medians.size() / 2,
+                     covg_medians.end());
+
+    return covg_medians[covg_medians.size() / 2];
+  });
+}
+
 auto CalculateCoverage(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<biosoup::Overlap> const& overlaps,
-    std::vector<EdlibAlignResult> const& edlib_results)
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<biosoup::Overlap> overlaps,
+    nonstd::span<EdlibAlignResult> edlib_results)
     -> std::vector<CoverageSignals> {
   auto const query_id = overlaps.front().lhs_id;
   auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len + 1U);
