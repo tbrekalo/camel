@@ -7,9 +7,11 @@
 #include <memory>
 #include <vector>
 
+#include "alignment.h"
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
-#include "alignment.h"
+#include "nonstd/span.hpp"
+#include "tbb/task_arena.h"
 
 namespace camel::detail {
 
@@ -20,15 +22,15 @@ struct CoverageSignals {
   static inline auto constexpr kInsIdx = 5U;
 };
 
-[[nodiscard]] auto ReadMedianCoverageEstimate(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<std::vector<biosoup::Overlap>> const& overlaps,
-    std::uint32_t const read_id) -> std::uint16_t;
+[[nodiscard]] auto EstimateCoverage(
+    tbb::task_arena& task_arena,
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<std::vector<biosoup::Overlap>> overlaps) -> std::uint16_t;
 
 [[nodiscard]] auto CalculateCoverage(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<biosoup::Overlap> const& overlaps,
-    std::vector<EdlibAlignResult> const& edlib_results)
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<biosoup::Overlap> overlaps,
+    nonstd::span<EdlibAlignResult> edlib_results)
     -> std::vector<CoverageSignals>;
 }  // namespace camel::detail
 

@@ -7,47 +7,15 @@
 #include <variant>
 
 #include "biosoup/timer.hpp"
-#include "detail/correct.h"
+#include "detail/coverage.h"
 #include "detail/overlap.h"
 #include "detail/window.h"
 #include "fmt/core.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/spoa.hpp"
-#include "tbb/flow_graph.h"
 #include "tsl/robin_map.h"
 
 namespace camel {
-
-namespace detail {
-
-[[nodiscard]] static auto EstimateCoverage(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<std::vector<biosoup::Overlap>> const& overlaps)
-    -> std::uint32_t {
-  // auto covg_futures = std::vector<std::future<std::uint16_t>>();
-  // covg_futures.reserve(reads.size());
-
-  // auto const covg_task =
-  //     [&reads, &overlaps](std::uint32_t const read_id) -> std::uint16_t {};
-
-  // for (auto read_id = 0U; read_id < reads.size(); ++read_id) {
-  //   if (!overlaps[read_id].empty()) {
-  //     covg_futures.emplace_back(state.thread_pool->Submit(covg_task,
-  //     read_id));
-  //   }
-  // }
-
-  // auto covgs = std::vector<std::uint16_t>(covg_futures.size());
-  // std::transform(covg_futures.begin(), covg_futures.end(), covgs.begin(),
-  //                std::mem_fn(&std::future<std::uint16_t>::get));
-
-  // std::nth_element(covgs.begin(), covgs.begin() + covgs.size() / 2,
-  //                  covgs.end());
-
-  // return covgs[covgs.size() / 2];
-}
-
-}  // namespace detail
 
 auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
                   std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads,
@@ -57,7 +25,11 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto timer = biosoup::Timer();
 
-  // timer.Start();
+  timer.Start();
+  auto coverage_estimate =
+      detail::EstimateCoverage(task_arena, src_reads, overlaps);
+  fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) coverage estimate {}\n",
+             timer.Stop(), coverage_estimate);
 
   // auto target_ids = std::vector<std::uint32_t>();
   // for (auto read_id = 0U; read_id < overlaps.size(); ++read_id) {
@@ -81,11 +53,6 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //     {})\n", timer.Stop(), kNTargets, kNSupporting);
 
   // timer.Start();
-  // auto const kCovgEstimate =
-  //     detail::EstimateCoverage(src_reads, overlaps);
-  // fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) coverage estimate:
-  // {}\n",
-  //            timer.Stop(), kCovgEstimate);
 
   // {
   //   timer.Start();
@@ -123,7 +90,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //     window_futures[i] = state.thread_pool->Submit(
   //         [&src_reads, &overlaps, kCovgEstimate,
   //          alignments = std::move(alignments)](
-  //             std::uint32_t read_id) -> std::vector<detail::ReferenceWindow>
+  //             std::uint32_t read_id) ->
+  //             std::vector<detail::ReferenceWindow>
   //             {
   //           auto windows = detail::CreateWindowsFromAlignments(
   //               src_reads, std::move(overlaps[read_id]),
@@ -146,7 +114,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //              timer.Lap(), n_transformed, kNOverlaps);
   //   decltype(align_futures){}.swap(align_futures);
 
-  //   auto ref_windows = std::vector<std::vector<detail::ReferenceWindow>>();
+  //   auto ref_windows =
+  //   std::vector<std::vector<detail::ReferenceWindow>>();
   //   ref_windows.reserve(window_futures.size());
 
   //   for (auto i = 0U; i < window_futures.size(); ++i) {
@@ -162,9 +131,11 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //   }
 
   //   fmt::print(stderr,
-  //              "\r[camel::ErrorCorrect]({:12.3f}) collected window futures "
+  //              "\r[camel::ErrorCorrect]({:12.3f}) collected window
+  //              futures "
   //              "{} / {}\n",
-  //              timer.Stop(), window_futures.size(), window_futures.size());
+  //              timer.Stop(), window_futures.size(),
+  //              window_futures.size());
   //   decltype(window_futures)().swap(window_futures);
 
   //   auto alignment_engines =
@@ -182,8 +153,9 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //   auto spoa_futures = std::vector<std::future<void>>();
 
   //   for (auto read_idx = 0U; read_idx < ref_windows.size(); ++read_idx) {
-  //     auto graphs = std::vector<spoa::Graph>(ref_windows[read_idx].size());
-  //     auto backbone = src_reads[target_ids[read_idx]]->InflateData();
+  //     auto graphs =
+  //     std::vector<spoa::Graph>(ref_windows[read_idx].size()); auto
+  //     backbone = src_reads[target_ids[read_idx]]->InflateData();
 
   //     for (auto win_idx = 0U; win_idx < ref_windows[read_idx].size();
   //          ++win_idx) {
@@ -203,8 +175,9 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //             auto const& alignment_engine =
   //                 alignment_engines[std::this_thread::get_id()];
 
-  //             auto const& [win_ref_intv, aligned_segments] = active_window;
-  //             auto const window_length = IntervalLength(win_ref_intv);
+  //             auto const& [win_ref_intv, aligned_segments] =
+  //             active_window; auto const window_length =
+  //             IntervalLength(win_ref_intv);
 
   //             for (auto const& [alignment_interval, bases] :
   //             aligned_segments) {
@@ -226,8 +199,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //               } else {
   //                 auto mapping = std::vector<spoa::Graph::Node const*>();
   //                 auto subgraph = graphs[win_idx].Subgraph(
-  //                     alignment_interval.first, alignment_interval.last - 1,
-  //                     &mapping);
+  //                     alignment_interval.first, alignment_interval.last -
+  //                     1, &mapping);
 
   //                 alignment =
   //                     alignment_engines[std::this_thread::get_id()]->Align(
@@ -241,7 +214,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //     }
 
   //     auto consensus = std::string();
-  //     consensus.reserve(src_reads[target_ids[read_idx]]->inflated_len * 1.2);
+  //     consensus.reserve(src_reads[target_ids[read_idx]]->inflated_len
+  //     * 1.2);
 
   //     for (auto i = 0; i < spoa_futures.size(); ++i) {
   //       spoa_futures[i].wait();
@@ -249,7 +223,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
 
   //     {
   //       auto prev = 0U;
-  //       for (auto win_idx = 0U; win_idx < spoa_futures.size(); ++win_idx) {
+  //       for (auto win_idx = 0U; win_idx < spoa_futures.size(); ++win_idx)
+  //       {
   //         spoa_futures[win_idx].wait();
   //         auto const& interval = ref_windows[read_idx][win_idx].interval;
 
@@ -260,7 +235,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //         prev = interval.last;
   //       }
 
-  //       consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
+  //       consensus.insert(consensus.end(), std::next(backbone.begin(),
+  //       prev),
   //                        backbone.end());
   //     }
 
@@ -268,14 +244,15 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //         src_reads[target_ids[read_idx]]->name, consensus));
   //     fmt::print(
   //         stderr,
-  //         "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {} / "
+  //         "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {} /
+  //         "
   //         "{} reads",
   //         timer.Lap(), read_idx + 1, ref_windows.size());
   //     spoa_futures.clear();
   //   }
   //   fmt::print(stderr,
-  //              "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for {}
-  //              / "
+  //              "\r[camel::ErrorCorrect]({:12.3f}) generated consensus for
+  //              {} / "
   //              "{} reads\n",
   //              timer.Stop(), ref_windows.size(), ref_windows.size());
   // }

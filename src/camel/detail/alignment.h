@@ -13,7 +13,7 @@ namespace camel::detail {
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     biosoup::Overlap const& ovlp) -> std::pair<std::string, std::string>;
 
-[[nodiscard]] static auto AlignStrings(std::string_view lhs_str_view,
+[[nodiscard]] auto AlignStrings(std::string_view lhs_str_view,
                                        std::string_view rhs_str_view)
     -> EdlibAlignResult;
 
