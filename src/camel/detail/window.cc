@@ -81,9 +81,9 @@ namespace camel::detail {
 }
 
 static auto BindReadSegmentsToWindows(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<biosoup::Overlap> const& overlaps,
-    std::vector<EdlibAlignResult> const& edlib_results,
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<biosoup::Overlap> overlaps,
+    nonstd::span<EdlibAlignResult> edlib_results,
     std::vector<ReferenceWindow>& windows) -> void {
   for (auto i = 0U; i < overlaps.size(); ++i) {
     auto win_idx = std::distance(
@@ -130,11 +130,15 @@ static auto BindReadSegmentsToWindows(
 }
 
 static auto KeepHaploidOverlaps(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<biosoup::Overlap>& overlaps,
-    std::vector<EdlibAlignResult>& edlib_results,
-    std::vector<CoverageSignals> const& coverage,
-    std::uint32_t const global_coverage_estimate) -> void {
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<biosoup::Overlap> overlaps,
+    nonstd::span<EdlibAlignResult> edlib_results,
+    nonstd::span<CoverageSignals> coverage,
+    std::uint32_t const global_coverage_estimate)
+    -> std::pair<std::vector<biosoup::Overlap>, std::vector<EdlibAlignResult>> {
+  auto haploid_overlaps = std::vector<biosoup::Overlap>();
+  auto haploid_alignments = std::vector<EdlibAlignResult>();
+
   auto const query_id = overlaps.front().lhs_id;
   auto snp_sites = std::vector<std::uint32_t>();
   snp_sites.reserve(coverage.size() / 10U);
@@ -203,43 +207,44 @@ static auto KeepHaploidOverlaps(
                         return snp_rate <= median_snp_rate;
                       });
 
-    auto updated_ovlps = std::vector<biosoup::Overlap>(n_kept_ovlps);
-    auto updated_edlib_results = std::vector<EdlibAlignResult>(n_kept_ovlps);
+    haploid_overlaps.resize(n_kept_ovlps);
+    haploid_alignments.resize(n_kept_ovlps);
 
     auto j = 0U;
     for (auto i = 0U; i < overlaps.size(); ++i) {
       if (j < n_kept_ovlps && normed_snp_rate[i] <= median_snp_rate) {
-        updated_ovlps[j] = overlaps[i];
-        updated_edlib_results[j++] = edlib_results[i];
+        haploid_overlaps[j] = overlaps[i];
+        haploid_alignments[j++] = edlib_results[i];
       } else {
         edlibFreeAlignResult(edlib_results[i]);
       }
     }
-
-    std::swap(updated_ovlps, overlaps);
-    std::swap(updated_edlib_results, edlib_results);
   }
+
+  return std::make_pair(std::move(haploid_overlaps),
+                        std::move(haploid_alignments));
 }
 
 auto CreateWindowsFromAlignments(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::vector<biosoup::Overlap> overlaps,
-    std::vector<EdlibAlignResult> edlib_results,
+    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    nonstd::span<biosoup::Overlap> overlaps,
+    nonstd::span<EdlibAlignResult> edlib_results,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow> {
   auto const query_id = overlaps.front().lhs_id;
   auto coverage = CalculateCoverage(reads, overlaps, edlib_results);
 
-  KeepHaploidOverlaps(reads, overlaps, edlib_results, coverage,
-                      global_coverage_estimate);
+  auto [haploid_overlaps, haploid_alignments] = KeepHaploidOverlaps(
+      reads, overlaps, edlib_results, coverage, global_coverage_estimate);
 
   auto windows = WindowIntervalsToWindows(
       reads[query_id]->inflated_len,
       CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate)));
 
-  BindReadSegmentsToWindows(reads, overlaps, edlib_results, windows);
+  BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
+                            windows);
 
-  std::for_each(edlib_results.begin(), edlib_results.end(),
+  std::for_each(haploid_alignments.begin(), haploid_alignments.end(),
                 edlibFreeAlignResult);
 
   return windows;
