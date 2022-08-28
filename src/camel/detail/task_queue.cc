@@ -44,29 +44,33 @@ struct ArgPackTaskTraits<WindowArgPack> {
 
 TaskQueue::TaskQueue() : pimpl_(std::make_shared<Impl>()) {}
 
-auto TaskQueue::Push(ArgsPack args) -> std::size_t {
+auto TaskQueue::Push(ArgsPack args_pack) -> std::size_t {
   auto task_id = pimpl_->task_counter++;
   pimpl_->task_group.run([=]() -> void {
-    // std::visit(
-    //     [=](auto args_pack) -> void {
-    //       using traits = ArgPackTaskTraits<
-    //           std::remove_cv_t<std::remove_reference_t<decltype(args_pack)>>>;
-    //       pimpl_->task_queue[traits::priority].emplace(
-    //           TaskResult{.task_id = task_id,
-    //                      .value = std::apply(traits::function, args_pack)});
-    //     },
-    //     args);
+    std::visit(
+        [=, pimpl = pimpl_](auto args_pack) -> void {
+          using traits = ArgPackTaskTraits<
+              std::remove_cv_t<std::remove_reference_t<decltype(args_pack)>>>;
+          pimpl->task_queue[traits::priority].emplace([=]() -> void {
+            pimpl->result_queue.push(
+                TaskResult{.task_id = task_id,
+                           .value = std::apply(traits::function, args_pack)});
+          }
 
-    // {
-    //   auto work = Impl::Work();
-    //   for (auto idx = 0U; true; idx = (idx + 1U) % 3U) {
-    //     if (pimpl_->task_queue[idx].try_pop(work)) {
-    //       break;
-    //     }
-    //   }
+          );
+        },
+        args_pack);
 
-    //   work();
-    // }
+    {
+      auto work = Impl::Work();
+      for (auto idx = 0U; true; idx = (idx + 1U) % 3U) {
+        if (pimpl_->task_queue[idx].try_pop(work)) {
+          break;
+        }
+      }
+
+      work();
+    }
   });
 
   return task_id;
