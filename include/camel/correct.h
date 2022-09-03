@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "biosoup/nucleic_acid.hpp"
-#include "tbb/task_arena.h"
 #include "biosoup/overlap.hpp"
 #include "camel/export.h"
 
@@ -23,7 +22,6 @@ CAMEL_EXPORT struct CorrectConfig {
 };
 
 CAMEL_EXPORT [[nodiscard]] auto ErrorCorrect(
-    tbb::task_arena& task_arena,
     CorrectConfig const correct_cfg,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads,
     std::vector<std::vector<biosoup::Overlap>> overlaps)
