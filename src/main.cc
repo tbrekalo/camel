@@ -14,6 +14,7 @@
 #include "camel/io.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
+#include "tbb/task_arena.h"
 
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
 
@@ -85,13 +86,13 @@ auto main(int argc, char** argv) -> int {
 
   auto timer = biosoup::Timer();
 
-  {
+  task_arena.execute([&] {
     auto const correct_cfg = camel::CorrectConfig{
         .poa_cfg = camel::POAConfig{},
         .correct_window = result["window_length"].as<std::uint32_t>()};
 
     timer.Start();
-    auto reads = camel::LoadSequences(task_arena, read_paths);
+    auto reads = camel::LoadSequences(read_paths);
     fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
                reads.size());
 
@@ -105,14 +106,14 @@ auto main(int argc, char** argv) -> int {
                n_ovlps);
 
     timer.Start();
-    auto corrected_reads = camel::ErrorCorrect(
-        task_arena, correct_cfg, std::move(reads), std::move(overlaps));
+    task_arena.execute([&]() -> void {
+      auto corrected_reads = camel::ErrorCorrect(correct_cfg, std::move(reads),
+                                                 std::move(overlaps));
+      camel::StoreSequences(corrected_reads, out_path, 1U << 28U);
+    });
     timer.Stop();
-
-    camel::StoreSequences(task_arena, corrected_reads, out_path, 1U << 28U);
-  }
-
-  fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
+    fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
+  });
 
   return EXIT_SUCCESS;
 }
