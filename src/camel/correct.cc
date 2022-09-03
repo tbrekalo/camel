@@ -16,6 +16,8 @@ namespace camel {
 
 namespace detail {
 
+static auto constexpr kUpdateInterval = 1. / 24.;
+
 struct AlignmentTaskPairing {
   TaskIdType task_id;
   std::uint32_t read_id;
@@ -93,7 +95,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         ++n_aligned;
       }
 
-      if (update_timer.Lap() > 0.0167) {
+      if (update_timer.Lap() > detail::kUpdateInterval) {
         report_status();
         update_timer.Start();
       }
