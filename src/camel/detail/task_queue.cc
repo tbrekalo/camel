@@ -32,7 +32,7 @@ struct ArgPackTaskTraits;
 
 template <>
 struct ArgPackTaskTraits<AlignmentArgPack> {
-  static constexpr auto function = AlignStrings;
+  static constexpr auto function = OverlapToALignment;
   static constexpr auto priority = 2;
 };
 
@@ -44,7 +44,7 @@ struct ArgPackTaskTraits<WindowArgPack> {
 
 TaskQueue::TaskQueue() : pimpl_(std::make_shared<Impl>()) {}
 
-auto TaskQueue::Push(ArgsPack args_pack) -> std::size_t {
+auto TaskQueue::Push(ArgsPack args_pack) -> TaskIdType {
   auto task_id = pimpl_->task_counter++;
   pimpl_->task_group.run([=]() -> void {
     std::visit(
@@ -55,9 +55,7 @@ auto TaskQueue::Push(ArgsPack args_pack) -> std::size_t {
             pimpl->result_queue.push(
                 TaskResult{.task_id = task_id,
                            .value = std::apply(traits::function, args_pack)});
-          }
-
-          );
+          });
         },
         args_pack);
 

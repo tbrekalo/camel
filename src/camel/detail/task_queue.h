@@ -9,6 +9,8 @@
 
 namespace camel::detail {
 
+using TaskIdType = std::uint64_t;
+
 using AlignmentResult = EdlibAlignResult;
 using WindowResult = std::vector<ReferenceWindow>;
 using ConsensusResult = std::unique_ptr<biosoup::NucleicAcid>;
@@ -17,11 +19,13 @@ using ResultVariant =
     std::variant<AlignmentResult, WindowResult, ConsensusResult>;
 
 struct TaskResult {
-  std::size_t task_id;
+  TaskIdType task_id;
   ResultVariant value;
 };
 
-using AlignmentArgPack = std::tuple<std::string_view, std::string_view>;
+using AlignmentArgPack =
+    std::tuple<nonstd::span<std::unique_ptr<biosoup::NucleicAcid>>,
+               biosoup::Overlap>;
 using WindowArgPack =
     std::tuple<nonstd::span<std::unique_ptr<biosoup::NucleicAcid>>,
                nonstd::span<biosoup::Overlap>, nonstd::span<EdlibAlignResult>,
@@ -33,8 +37,8 @@ class TaskQueue {
  public:
   explicit TaskQueue();
 
-  auto Push(ArgsPack args) -> std::size_t;
-  auto TryPop() -> std::optional<TaskResult>;
+  [[nodiscard]] auto Push(ArgsPack args) -> TaskIdType;
+  [[nodiscard]] auto TryPop() -> std::optional<TaskResult>;
 
  private:
   struct Impl;
