@@ -23,7 +23,6 @@ struct CoverageSignals {
 };
 
 [[nodiscard]] auto EstimateCoverage(
-    tbb::task_arena& task_arena,
     nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
     nonstd::span<std::vector<biosoup::Overlap>> overlaps) -> std::uint16_t;
 

@@ -154,15 +154,12 @@ auto LoadSequences(std::filesystem::path const& path)
 }
 
 auto StoreSequences(
-    tbb::task_arena& task_arena,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder) -> void {
-  StoreSequences(task_arena, seqs, dst_folder,
-                 detail::kDefaultSeqStorageFileSz);
+  StoreSequences(seqs, dst_folder, detail::kDefaultSeqStorageFileSz);
 }
 
 auto StoreSequences(
-    tbb::task_arena& task_arena,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
     -> void {
@@ -218,56 +215,51 @@ auto StoreSequences(
   };
 
   {
-    task_arena.execute([&]() -> void {
-      auto batch_id = 0U;
-      auto task_group = tbb::task_group();
-      for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
-        auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
-        task_group.run([&dst_folder, is_fasta, store_fn, first, last,
-                        batch_id]() -> void {
-          auto local_first = first;
-          auto local_last = last;
-          auto const dst_file_path =
-              dst_folder / (fmt::format("corrected_batch_{:04d}", batch_id) +
-                            (is_fasta ? ".fa" : ".fq"));
+    auto batch_id = 0U;
+    auto task_group = tbb::task_group();
+    for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
+      auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
+      task_group.run(
+          [&dst_folder, is_fasta, store_fn, first, last, batch_id]() -> void {
+            auto local_first = first;
+            auto local_last = last;
+            auto const dst_file_path =
+                dst_folder / (fmt::format("corrected_batch_{:04d}", batch_id) +
+                              (is_fasta ? ".fa" : ".fq"));
 
-          auto ofstrm =
-              std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
+            auto ofstrm =
+                std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
 
-          for (; local_first != local_last; ++local_first) {
-            store_fn(ofstrm, *first);
-          }
-        });
+            for (; local_first != local_last; ++local_first) {
+              store_fn(ofstrm, *first);
+            }
+          });
 
-        first = last;
-      }
+      first = last;
+    }
 
-      task_group.wait();
-    });
+    task_group.wait();
   }
 }
 
-auto LoadSequences(tbb::task_arena& task_arena,
-                   std::vector<std::filesystem::path> const& paths)
+auto LoadSequences(std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
   auto buff_vec =
       tbb::concurrent_vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
 
-  task_arena.execute([&buff_vec, &dst, &paths]() -> void {
-    tbb::parallel_for_each(
-        paths, [&buff_vec](std::filesystem::path const& path) -> void {
-          for (auto& seq : LoadSequences(path)) {
-            buff_vec.push_back(std::move(seq));
-          }
-        });
+  tbb::parallel_for_each(
+      paths, [&buff_vec](std::filesystem::path const& path) -> void {
+        for (auto& seq : LoadSequences(path)) {
+          buff_vec.push_back(std::move(seq));
+        }
+      });
 
-    // reindexing
-    tbb::parallel_sort(buff_vec);
-    tbb::parallel_for(
-        0U, static_cast<std::uint32_t>(buff_vec.size()),
-        [&](std::uint32_t idx) -> void { buff_vec[idx]->id = idx; });
-  });
+  // reindexing
+  tbb::parallel_sort(buff_vec);
+  tbb::parallel_for(
+      0U, static_cast<std::uint32_t>(buff_vec.size()),
+      [&](std::uint32_t idx) -> void { buff_vec[idx]->id = idx; });
 
   dst.reserve(buff_vec.size());
   std::move(buff_vec.begin(), buff_vec.end(), std::back_inserter(dst));

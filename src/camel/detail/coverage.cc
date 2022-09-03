@@ -38,24 +38,20 @@ static auto constexpr kShrinkShift = 3U;
   return pile[pile.size() / 2];
 }
 
-auto EstimateCoverage(
-    tbb::task_arena& task_arena,
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<std::vector<biosoup::Overlap>> overlaps)
+auto EstimateCoverage(nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+                      nonstd::span<std::vector<biosoup::Overlap>> overlaps)
     -> std::uint16_t {
-  return task_arena.execute([&reads, &overlaps]() -> std::uint16_t {
-    auto covg_medians = std::vector<std::uint16_t>(reads.size());
-    tbb::parallel_for(0UL, reads.size(), [&](std::size_t read_idx) -> void {
-      covg_medians[read_idx] =
-          detail::ReadMedianCoverageEstimate(reads, overlaps, read_idx);
-    });
-
-    std::nth_element(covg_medians.begin(),
-                     covg_medians.begin() + covg_medians.size() / 2,
-                     covg_medians.end());
-
-    return covg_medians[covg_medians.size() / 2];
+  auto covg_medians = std::vector<std::uint16_t>(reads.size());
+  tbb::parallel_for(0UL, reads.size(), [&](std::size_t read_idx) -> void {
+    covg_medians[read_idx] =
+        detail::ReadMedianCoverageEstimate(reads, overlaps, read_idx);
   });
+
+  std::nth_element(covg_medians.begin(),
+                   covg_medians.begin() + covg_medians.size() / 2,
+                   covg_medians.end());
+
+  return covg_medians[covg_medians.size() / 2];
 }
 
 auto CalculateCoverage(
