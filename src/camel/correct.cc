@@ -8,28 +8,102 @@
 
 #include "biosoup/timer.hpp"
 #include "detail/coverage.h"
-#include "detail/overlap.h"
-#include "detail/window.h"
+#include "detail/task_queue.h"
 #include "fmt/core.h"
-#include "spoa/alignment_engine.hpp"
-#include "spoa/spoa.hpp"
 #include "tsl/robin_map.h"
 
 namespace camel {
 
-auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
+namespace detail {
+
+struct AlignmentTaskPairing {
+  TaskIdType task_id;
+  std::uint32_t read_id;
+};
+
+struct WindowTaskPairing {
+  TaskIdType task_id;
+  std::uint32_t read_id;
+};
+
+}  // namespace detail
+
+auto ErrorCorrect(CorrectConfig const correct_cfg,
                   std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads,
                   std::vector<std::vector<biosoup::Overlap>> overlaps)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
   auto corrected_targets = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-  auto timer = biosoup::Timer();
+  auto function_timer = biosoup::Timer();
 
-  timer.Start();
-  auto coverage_estimate =
-      detail::EstimateCoverage(task_arena, src_reads, overlaps);
+  function_timer.Start();
+  auto coverage_estimate = detail::EstimateCoverage(src_reads, overlaps);
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) coverage estimate {}\n",
-             timer.Stop(), coverage_estimate);
+             function_timer.Stop(), coverage_estimate);
+
+  function_timer.Start();
+  auto const n_targets = std::transform_reduce(
+      overlaps.cbegin(), overlaps.cend(), 0UL, std::plus<size_t>(),
+      [](std::vector<biosoup::Overlap> const& ovlp_vec) -> size_t {
+        return ovlp_vec.size();
+      });
+
+  fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) n target reads {}\n",
+             function_timer.Stop(), n_targets);
+
+  auto n_aligned = 0;
+  auto n_windowed = 0;
+  auto n_polished = 0;
+
+  auto const report_status = [&]() -> void {
+    auto const to_percent = [n_targets](double n) -> double {
+      return 100. * n / n_targets;
+    };
+    fmt::print(stderr,
+               "\r[camel::ErrorCorrect]({:12.3f}) aligned : {:3.2f}% | "
+               "n_windowed : {:3.2f}% | "
+               "n_polished : {:3.2f}%",
+               function_timer.Lap(), to_percent(n_aligned),
+               to_percent(n_windowed), to_percent(n_polished));
+  };
+
+  auto alignment_registry = std::vector<detail::AlignmentTaskPairing>();
+  auto windowing_registry = std::vector<detail::WindowTaskPairing>();
+
+  auto task_queue = detail::TaskQueue();
+
+  auto reads_span =
+      nonstd::span<std::unique_ptr<biosoup::NucleicAcid>>(src_reads);
+  for (auto i = 0U; i < src_reads.size(); ++i) {
+    for (auto const& ovlp : overlaps[i]) {
+      alignment_registry.push_back(detail::AlignmentTaskPairing{
+          .task_id =
+              task_queue.Push(detail::AlignmentArgPack(reads_span, ovlp)),
+          .read_id = i});
+    }
+  }
+
+  function_timer.Start();
+  {
+    auto update_timer = biosoup::Timer();
+
+    update_timer.Start();
+    while (n_aligned < n_targets) {
+      if (auto opt_result = task_queue.TryPop(); opt_result) {
+        ++n_aligned;
+      }
+
+      if (update_timer.Lap() > 0.0167) {
+        report_status();
+        update_timer.Start();
+      }
+    }
+
+    report_status();
+    fmt::print(stderr, "\n");
+  }
+
+  // auto windowing_registry =
 
   // auto target_ids = std::vector<std::uint32_t>();
   // for (auto read_id = 0U; read_id < overlaps.size(); ++read_id) {
@@ -257,7 +331,8 @@ auto ErrorCorrect(tbb::task_arena& task_arena, CorrectConfig const correct_cfg,
   //              timer.Stop(), ref_windows.size(), ref_windows.size());
   // }
 
-  fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n", timer.elapsed_time());
+  fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n",
+             function_timer.elapsed_time());
   return dst;
 }
 
