@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "alignment.h"
-#include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
 #include "nonstd/span.hpp"
+#include "nucleic_view.h"
 #include "tbb/task_arena.h"
 
 namespace camel::detail {
