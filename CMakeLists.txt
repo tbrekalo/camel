@@ -8,6 +8,14 @@ if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   set(CAMEL_MAIN_PROJECT TRUE)
 endif ()
 
+find_program(MOLD_FOUND mold)
+if (MOLD_FOUND) 
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(STATUS "[camel] mold path: ${MOLD_FOUND}")
+    add_link_options("-fuse-ld=mold")
+  endif ()
+endif()
+
 # output dirs
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
@@ -54,7 +62,7 @@ conan_cmake_configure(
   REQUIRES 
     cxxopts/3.0.0 
     fmt/8.1.1
-    onetbb/2021.3.0
+    tbb/2020.3
     span-lite/0.10.3
     tsl-robin-map/1.0.1
   GENERATORS 
