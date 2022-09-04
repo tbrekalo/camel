@@ -292,30 +292,34 @@ auto LoadOverlaps(
   };
 
   {
-    auto best_ovlps = std::vector<biosoup::Overlap>(reads.size());
-    {
-      auto parser =
-          bioparser::Parser<detail::PafOverlap>::Create<bioparser::PafParser>(
-              paf_path.string());
+    auto parser =
+        bioparser::Parser<detail::PafOverlap>::Create<bioparser::PafParser>(
+            paf_path.string());
 
-      auto ovlps =
-          parser->Parse(std::numeric_limits<std::uint64_t>::max(), true);
+    auto ovlps = parser->Parse(std::numeric_limits<std::uint64_t>::max(), true);
 
-      for (auto& ovlp_ptr : ovlps) {
-        auto ovlp = transform_overlap(std::move(ovlp_ptr));
-        if (ovlp.lhs_id != ovlp.rhs_id && detail::OverlapLength(ovlp) > 1280U &&
-            detail::OverlapError(ovlp) < 0.2 &&
-            detail::OverlapLength(best_ovlps[ovlp.lhs_id]) <
-                detail::OverlapLength(ovlp)) {
-          best_ovlps[ovlp.lhs_id] = ovlp;
+    auto const store_ovlp = [&](biosoup::Overlap ovlp) -> void {
+      dst[ovlp.lhs_id].push_back(ovlp);
+      for (auto i = dst[ovlp.lhs_id].size() - 1; i > 0; --i) {
+        if (detail::OverlapLength(dst[ovlp.lhs_id][i - 1]) <
+            detail::OverlapLength(dst[ovlp.lhs_id][i])) {
+          std::swap(dst[ovlp.lhs_id][i - 1], dst[ovlp.lhs_id][i]);
+        } else {
+          break;
         }
       }
-    }
 
-    for (auto const& ovlp : best_ovlps) {
-      if (detail::OverlapLength(ovlp) > 0U) {
-        auto const rev_ovlp = detail::ReverseOverlap(ovlp);
-        dst[ovlp.rhs_id].push_back(detail::ReverseOverlap(ovlp));
+      if (dst[ovlp.lhs_id].size() > 64) {
+        dst[ovlp.lhs_id].pop_back();
+      }
+    };
+
+    for (auto& ovlp_ptr : ovlps) {
+      auto ovlp = transform_overlap(std::move(ovlp_ptr));
+      if (ovlp.lhs_id != ovlp.rhs_id && detail::OverlapLength(ovlp) > 1280U &&
+          detail::OverlapError(ovlp) < 0.2) {
+        store_ovlp(ovlp);
+        store_ovlp(detail::ReverseOverlap(ovlp));
       }
     }
   }
