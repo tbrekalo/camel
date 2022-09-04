@@ -1,5 +1,5 @@
 #ifndef CAMEL_CONSENSUS_H_
-#define CMALE_CONSENSUS_H_
+#define CAMEL_CONSENSUS_H_
 
 namespace camel::detail {
 
