@@ -8,6 +8,7 @@
 
 #include "biosoup/timer.hpp"
 #include "detail/coverage.h"
+#include "detail/overload.h"
 #include "detail/task_queue.h"
 #include "fmt/core.h"
 #include "tsl/robin_map.h"
@@ -18,20 +19,10 @@ namespace detail {
 
 static auto constexpr kUpdateInterval = 1. / 24.;
 
-struct AlignmentTaskPairing {
-  TaskIdType task_id;
-  std::uint32_t read_id;
-};
-
-struct WindowTaskPairing {
-  TaskIdType task_id;
-  std::uint32_t read_id;
-};
-
 }  // namespace detail
 
 auto ErrorCorrect(CorrectConfig const correct_cfg,
-                  std::vector<std::unique_ptr<biosoup::NucleicAcid>> src_reads,
+                  std::vector<std::unique_ptr<biosoup::NucleicAcid>> reads,
                   std::vector<std::vector<biosoup::Overlap>> overlaps)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
   auto corrected_targets = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
@@ -39,7 +30,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
   auto function_timer = biosoup::Timer();
 
   function_timer.Start();
-  auto coverage_estimate = detail::EstimateCoverage(src_reads, overlaps);
+  auto coverage_estimate = detail::EstimateCoverage(reads, overlaps);
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) coverage estimate {}\n",
              function_timer.Stop(), coverage_estimate);
 
@@ -47,7 +38,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
   auto const n_targets = std::transform_reduce(
       overlaps.cbegin(), overlaps.cend(), 0UL, std::plus<size_t>(),
       [](std::vector<biosoup::Overlap> const& ovlp_vec) -> size_t {
-        return ovlp_vec.size();
+        return !ovlp_vec.empty();
       });
 
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) n target reads {}\n",
@@ -69,19 +60,30 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
                to_percent(n_windowed), to_percent(n_polished));
   };
 
-  auto alignment_registry = std::vector<detail::AlignmentTaskPairing>();
-  auto windowing_registry = std::vector<detail::WindowTaskPairing>();
-
   auto task_queue = detail::TaskQueue();
 
-  auto reads_span =
-      nonstd::span<std::unique_ptr<biosoup::NucleicAcid>>(src_reads);
-  for (auto i = 0U; i < src_reads.size(); ++i) {
-    for (auto const& ovlp : overlaps[i]) {
-      alignment_registry.push_back(detail::AlignmentTaskPairing{
-          .task_id =
-              task_queue.Push(detail::AlignmentArgPack(reads_span, ovlp)),
-          .read_id = i});
+  auto alignment_registry =
+      tsl::robin_map<detail::TaskIdType,
+                     std::pair<std::uint32_t, std::uint32_t>>(
+          reads.size() * coverage_estimate);
+  auto alignment_counts = std::vector<std::uint32_t>(reads.size());
+  auto windowing_registry = tsl::robin_map<detail::TaskIdType, std::uint32_t>(
+      reads.size() * coverage_estimate);
+
+  auto alignments = std::vector<std::vector<EdlibAlignResult>>(reads.size());
+  auto ref_windows =
+      std::vector<std::vector<detail::ReferenceWindow>>(reads.size());
+
+  for (auto i = 0U; i < reads.size(); ++i) {
+    alignments[i].resize(overlaps[i].size());
+    alignment_counts[i] = overlaps[i].size();
+  }
+
+  for (auto read_idx = 0U; read_idx < reads.size(); ++read_idx) {
+    for (auto ovlp_idx = 0U; ovlp_idx < overlaps[read_idx].size(); ++ovlp_idx) {
+      alignment_registry[task_queue.Push(
+          detail::AlignmentArgPack(reads, overlaps[read_idx][ovlp_idx]))] =
+          std::pair(read_idx, ovlp_idx);
     }
   }
 
@@ -90,9 +92,30 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
     auto update_timer = biosoup::Timer();
 
     update_timer.Start();
-    while (n_aligned < n_targets) {
+    while (n_windowed < n_targets) {
       if (auto opt_result = task_queue.TryPop(); opt_result) {
-        ++n_aligned;
+        std::visit(
+            detail::overload{
+                [&, task_id = opt_result->task_id](
+                    detail::AlignmentResult alignment) -> void {
+                  auto const [read_id, ovlp_id] = alignment_registry[task_id];
+
+                  alignments[read_id][ovlp_id] = alignment;
+                  if (--alignment_counts[read_id] == 0U) {
+                    windowing_registry[task_queue.Push(detail::WindowArgPack(
+                        reads, overlaps[read_id], alignments[read_id],
+                        coverage_estimate))] = read_id;
+
+                    ++n_aligned;
+                  }
+                },
+                [&, task_id = opt_result->task_id](
+                    detail::WindowResult ref_windows) -> void {
+                  auto const read_id = windowing_registry[task_id];
+                  ++n_windowed;
+                },
+                [](auto&&) -> void {}},
+            std::move(opt_result->value));
       }
 
       if (update_timer.Lap() > detail::kUpdateInterval) {
@@ -103,6 +126,12 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
 
     report_status();
     fmt::print(stderr, "\n");
+
+    // for (auto const& it : alignments) {
+    //   for (auto const& jt : it) {
+    //     edlibFreeAlignResult(jt);
+    //   }
+    // }
   }
 
   // auto windowing_registry =
