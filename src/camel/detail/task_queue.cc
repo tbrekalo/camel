@@ -38,29 +38,27 @@ TaskQueue::TaskQueue() : pimpl_(std::make_shared<Impl>()) {}
 
 auto TaskQueue::Push(ArgsPack args_pack) -> TaskIdType {
   auto task_id = pimpl_->task_counter++;
+  std::visit(
+      [=, pimpl = pimpl_](auto args_pack) -> void {
+        using traits = ArgPackTaskTraits<
+            std::remove_cv_t<std::remove_reference_t<decltype(args_pack)>>>;
+        pimpl->task_queue[traits::priority].emplace([=]() -> void {
+          pimpl->result_queue.push(
+              TaskResult{.task_id = task_id,
+                         .value = std::apply(traits::function, args_pack)});
+        });
+      },
+      args_pack);
+
   pimpl_->task_group.run([=]() -> void {
-    std::visit(
-        [=, pimpl = pimpl_](auto args_pack) -> void {
-          using traits = ArgPackTaskTraits<
-              std::remove_cv_t<std::remove_reference_t<decltype(args_pack)>>>;
-          pimpl->task_queue[traits::priority].emplace([=]() -> void {
-            pimpl->result_queue.push(
-                TaskResult{.task_id = task_id,
-                           .value = std::apply(traits::function, args_pack)});
-          });
-        },
-        args_pack);
-
-    {
-      auto work = Impl::Work();
-      for (auto idx = 0U; true; idx = (idx + 1U) % 3U) {
-        if (pimpl_->task_queue[idx].try_pop(work)) {
-          break;
-        }
+    auto work = Impl::Work();
+    for (auto idx = 0U; true; idx = (idx + 1U) % 3U) {
+      if (pimpl_->task_queue[idx].try_pop(work)) {
+        break;
       }
-
-      work();
     }
+
+    work();
   });
 
   return task_id;
