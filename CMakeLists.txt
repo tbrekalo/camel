@@ -63,7 +63,6 @@ conan_cmake_configure(
     cxxopts/3.0.0 
     fmt/8.1.1
     tbb/2020.3
-    span-lite/0.10.3
     tsl-robin-map/1.0.1
   GENERATORS 
     cmake_find_package)
@@ -75,7 +74,6 @@ conan_cmake_install(PATH_OR_REFERENCE .
                     SETTINGS ${settings})
 
 find_package(fmt)
-find_package(span-lite)
 find_package(tsl-robin-map)
 find_package(TBB)
 
@@ -126,12 +124,12 @@ set_target_properties(camel PROPERTIES
 target_include_directories(camel 
   PUBLIC 
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
-target_compile_features(camel PUBLIC cxx_std_17)
+target_compile_features(camel PUBLIC cxx_std_20)
 target_link_libraries(camel
   PUBLIC
     biosoup TBB::tbb
   PRIVATE
-    bioparser edlib fmt::fmt nonstd::span-lite spoa tsl::robin_map)
+    bioparser edlib fmt::fmt spoa tsl::robin_map)
 
 # enable development options
 if (CAMEL_DEVEL_OPTS)

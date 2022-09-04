@@ -9,7 +9,6 @@
 
 #include "alignment.h"
 #include "biosoup/overlap.hpp"
-#include "nonstd/span.hpp"
 #include "nucleic_view.h"
 #include "tbb/task_arena.h"
 
@@ -23,13 +22,13 @@ struct CoverageSignals {
 };
 
 [[nodiscard]] auto EstimateCoverage(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<std::vector<biosoup::Overlap>> overlaps) -> std::uint16_t;
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<std::vector<biosoup::Overlap> const> overlaps) -> std::uint16_t;
 
 [[nodiscard]] auto CalculateCoverage(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<biosoup::Overlap> overlaps,
-    nonstd::span<EdlibAlignResult> edlib_results)
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap const> overlaps,
+    std::span<EdlibAlignResult const> edlib_results)
     -> std::vector<CoverageSignals>;
 }  // namespace camel::detail
 

@@ -81,10 +81,10 @@ namespace camel::detail {
 }
 
 static auto BindReadSegmentsToWindows(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<biosoup::Overlap> overlaps,
-    nonstd::span<EdlibAlignResult> edlib_results,
-    std::vector<ReferenceWindow>& windows) -> void {
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap const> overlaps,
+    std::span<EdlibAlignResult const> edlib_results,
+    std::span<ReferenceWindow> windows) -> void {
   for (auto i = 0U; i < overlaps.size(); ++i) {
     auto win_idx = std::distance(
         windows.begin(),
@@ -130,10 +130,10 @@ static auto BindReadSegmentsToWindows(
 }
 
 static auto KeepHaploidOverlaps(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<biosoup::Overlap> overlaps,
-    nonstd::span<EdlibAlignResult> edlib_results,
-    nonstd::span<CoverageSignals> coverage,
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap const> overlaps,
+    std::span<EdlibAlignResult const> edlib_results,
+    std::span<CoverageSignals const> coverage,
     std::uint32_t const global_coverage_estimate)
     -> std::pair<std::vector<biosoup::Overlap>, std::vector<EdlibAlignResult>> {
   auto haploid_overlaps = std::vector<biosoup::Overlap>();
@@ -226,9 +226,9 @@ static auto KeepHaploidOverlaps(
 }
 
 auto CreateWindowsFromAlignments(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<biosoup::Overlap> overlaps,
-    nonstd::span<EdlibAlignResult> edlib_results,
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap const> overlaps,
+    std::span<EdlibAlignResult const> edlib_results,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow> {
   auto const query_id = overlaps.front().lhs_id;

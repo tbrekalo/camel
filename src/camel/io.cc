@@ -256,7 +256,7 @@ auto LoadSequences(std::vector<std::filesystem::path> const& paths)
       });
 
   // reindexing
-  tbb::parallel_sort(buff_vec);
+  tbb::parallel_sort(buff_vec, detail::CmpNucleicAcidByName);
   tbb::parallel_for(
       0U, static_cast<std::uint32_t>(buff_vec.size()),
       [&](std::uint32_t idx) -> void { buff_vec[idx]->id = idx; });

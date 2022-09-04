@@ -5,11 +5,11 @@
 namespace camel::detail {
 
 auto ExtractSubstrings(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> std::tuple<std::string, std::string> {
   auto const lhs_view = NucleicView(reads[ovlp.lhs_id].get(), false);
   auto const rhs_view = NucleicView(reads[ovlp.rhs_id].get(),
-                                    /*is_reverse_complement = */ !ovlp.strand);
+                                    /* is_reverse_complement = */ !ovlp.strand);
 
   auto lhs_str =
       lhs_view.InflateData(ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
@@ -30,7 +30,7 @@ auto AlignStrings(std::string_view lhs_str_view, std::string_view rhs_str_view)
 }
 
 auto OverlapToALignment(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> EdlibAlignResult {
   return std::apply(AlignStrings, ExtractSubstrings(reads, ovlp));
 }
