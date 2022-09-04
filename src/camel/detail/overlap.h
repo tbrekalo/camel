@@ -13,7 +13,6 @@ namespace camel::detail {
  */
 enum class OverlapType : std::uint8_t {
   kUnclassified,
-
   kInternal,      ///< overlap has a deep location in one of the sequnces
   kLhsContained,  ///< rhs sequence spans over lhs sequence
   kRhsContained,  ///< lhs sequence spans over rhs sequence
@@ -27,8 +26,7 @@ enum class OverlapType : std::uint8_t {
  *         Filter(biosoup::Overlap const&) -> bool;
  */
 template <class T>
-using IsOverlapFilter =
-  std::is_invocable_r<bool, T, biosoup::Overlap const&>;
+using IsOverlapFilter = std::is_invocable_r<bool, T, biosoup::Overlap const&>;
 
 /**
  * @brief helper for @ref IsOverlapFilter
@@ -38,7 +36,7 @@ inline bool constexpr IsOverlapFilerV = IsOverlapFilter<T>::value;
 
 /**
  * @brief concept for overlap compare callable:
- *         OvlpCmp(biosoup::Overlap const&, biosoup::Overlap const&) -> bool 
+ *         OvlpCmp(biosoup::Overlap const&, biosoup::Overlap const&) -> bool
  */
 template <class T>
 using IsOverlapCmpCallable =
@@ -49,8 +47,7 @@ using IsOverlapCmpCallable =
  * @brief helper for @ref IsOverlapCmpCallable
  */
 template <class T>
-inline bool constexpr IsOverlapCmpCallableV =
-  IsOverlapCmpCallable<T>::value;
+inline bool constexpr IsOverlapCmpCallableV = IsOverlapCmpCallable<T>::value;
 
 /**
  * @brief concept for overlap sink callable:
@@ -86,7 +83,7 @@ auto OverlapLength(biosoup::Overlap const& ovlp) -> std::uint32_t;
  * @brief calculate overlap score
  */
 
- auto OverlapError(biosoup::Overlap const& ovlp) -> double;
+auto OverlapError(biosoup::Overlap const& ovlp) -> double;
 
 auto OverlapScore(biosoup::Overlap const& ovlp) -> double;
 
