@@ -24,12 +24,12 @@ struct TaskResult {
 };
 
 using AlignmentArgPack =
-    std::tuple<nonstd::span<std::unique_ptr<biosoup::NucleicAcid>>,
+    std::tuple<std::span<std::unique_ptr<biosoup::NucleicAcid> const>,
                biosoup::Overlap>;
 using WindowArgPack =
-    std::tuple<nonstd::span<std::unique_ptr<biosoup::NucleicAcid>>,
-               nonstd::span<biosoup::Overlap>, nonstd::span<EdlibAlignResult>,
-               std::uint32_t>;
+    std::tuple<std::span<std::unique_ptr<biosoup::NucleicAcid> const>,
+               std::span<biosoup::Overlap const>, std::span<EdlibAlignResult const>,
+               std::uint32_t const>;
 
 using ArgsPack = std::variant<AlignmentArgPack, WindowArgPack>;
 

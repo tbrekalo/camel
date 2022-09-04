@@ -7,8 +7,8 @@ namespace camel::detail {
 static auto constexpr kShrinkShift = 3U;
 
 [[nodiscard]] static auto ReadMedianCoverageEstimate(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    nonstd::span<std::vector<biosoup::Overlap>> const& overlaps,
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<std::vector<biosoup::Overlap> const> overlaps,
     std::uint32_t const read_id) -> std::uint16_t {
   auto pile = std::vector<std::uint16_t>(
       (reads[read_id]->inflated_len >> kShrinkShift) + 2U);
@@ -38,9 +38,9 @@ static auto constexpr kShrinkShift = 3U;
   return pile[pile.size() / 2];
 }
 
-auto EstimateCoverage(nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-                      nonstd::span<std::vector<biosoup::Overlap>> overlaps)
-    -> std::uint16_t {
+auto EstimateCoverage(
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<std::vector<biosoup::Overlap> const> overlaps) -> std::uint16_t {
   auto covg_medians = std::vector<std::uint16_t>(reads.size());
   tbb::parallel_for(0UL, reads.size(), [&](std::size_t read_idx) -> void {
     covg_medians[read_idx] =
@@ -55,9 +55,9 @@ auto EstimateCoverage(nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
 }
 
 auto CalculateCoverage(
-    nonstd::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
-    nonstd::span<biosoup::Overlap> overlaps,
-    nonstd::span<EdlibAlignResult> edlib_results)
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap const> overlaps,
+    std::span<EdlibAlignResult const> edlib_results)
     -> std::vector<CoverageSignals> {
   auto const query_id = overlaps.front().lhs_id;
   auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len + 1U);
@@ -68,8 +68,9 @@ auto CalculateCoverage(
 
   for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
     auto const& edlib_res = edlib_results[ovlp_idx];
-    auto const rhs_view = NucleicView(reads[overlaps[ovlp_idx].rhs_id].get(),
-                                      !overlaps[ovlp_idx].strand);
+    auto const rhs_view =
+        NucleicView(reads[overlaps[ovlp_idx].rhs_id].get(),
+                    /* is_reverse_complement = */ !overlaps[ovlp_idx].strand);
 
     auto lhs_pos = overlaps[ovlp_idx].lhs_begin;
     auto rhs_pos = overlaps[ovlp_idx].rhs_begin;
