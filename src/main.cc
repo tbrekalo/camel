@@ -24,8 +24,10 @@ auto main(int argc, char** argv) -> int {
 
   /* clang-format off */
   options.add_options("serialization arguments")
-    ("o,out", "output destination folder",
-      cxxopts::value<std::string>()->default_value("./camel_out"));
+    ("d,dst", "output destination folder",
+      cxxopts::value<std::string>()->default_value("./camel_out"))
+    ("o,n_overlaps", "number of overlaps per read to keep",
+      cxxopts::value<std::size_t>()->default_value("32"));
   options.add_options("correction arguments")
     ("m,match", "score for matching bases",
       cxxopts::value<std::int8_t>()->default_value("3"))
@@ -49,15 +51,15 @@ auto main(int argc, char** argv) -> int {
   auto const result = options.parse(argc, argv);
 
   auto const n_threads = result["threads"].as<std::uint32_t>();
-  auto const out_path = std::filesystem::path(result["out"].as<std::string>());
+  auto const dst_path = std::filesystem::path(result["dst"].as<std::string>());
 
   auto task_arena = tbb::task_arena(n_threads);
 
-  if (std::filesystem::exists(out_path)) {
-    std::filesystem::remove_all(out_path);
+  if (std::filesystem::exists(dst_path)) {
+    std::filesystem::remove_all(dst_path);
   }
 
-  std::filesystem::create_directory(out_path);
+  std::filesystem::create_directory(dst_path);
 
   auto read_paths = std::vector<std::filesystem::path>();
   auto overlaps_path =
@@ -97,7 +99,8 @@ auto main(int argc, char** argv) -> int {
                reads.size());
 
     timer.Start();
-    auto overlaps = camel::LoadOverlaps(overlaps_path, reads);
+    auto overlaps = camel::LoadOverlaps(overlaps_path, reads,
+                                        result["n_overlaps"].as<std::size_t>());
     auto const n_ovlps = std::transform_reduce(
         overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
         std::mem_fn(&std::vector<biosoup::Overlap>::size));
@@ -109,7 +112,7 @@ auto main(int argc, char** argv) -> int {
     task_arena.execute([&]() -> void {
       auto corrected_reads = camel::ErrorCorrect(correct_cfg, std::move(reads),
                                                  std::move(overlaps));
-      camel::StoreSequences(corrected_reads, out_path, 1U << 28U);
+      camel::StoreSequences(corrected_reads, dst_path, 1U << 28U);
     });
     timer.Stop();
     fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
