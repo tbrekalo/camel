@@ -28,7 +28,8 @@ using AlignmentArgPack =
                biosoup::Overlap>;
 using WindowArgPack =
     std::tuple<std::span<std::unique_ptr<biosoup::NucleicAcid> const>,
-               std::span<biosoup::Overlap const>, std::span<EdlibAlignResult const>,
+               std::span<biosoup::Overlap const>,
+               std::span<EdlibAlignResult const>, std::uint32_t const,
                std::uint32_t const>;
 
 using ArgsPack = std::variant<AlignmentArgPack, WindowArgPack>;
