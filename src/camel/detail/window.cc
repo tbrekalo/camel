@@ -5,7 +5,8 @@
 namespace camel::detail {
 
 [[nodiscard]] static auto CalcWindowIntervals(
-    std::vector<std::uint32_t> error_sites) -> std::vector<Interval> {
+    std::vector<std::uint32_t> error_sites, std::uint32_t window_len)
+    -> std::vector<Interval> {
   auto dst = std::vector<Interval>(error_sites.size());
   std::transform(error_sites.cbegin(), error_sites.cend(), dst.begin(),
                  [](std::uint32_t const pos) -> Interval {
@@ -25,7 +26,7 @@ namespace camel::detail {
                                 ? dst[i + 1].last - dst[i].first
                                 : kSentinelDist;
 
-      if (lhs_dist <= kWinLength || rhs_dist <= kWinLength) {
+      if (lhs_dist <= window_len || rhs_dist <= window_len) {
         if (lhs_dist < rhs_dist) {
           dst[i].first = dst[i - 1].first;
           dst[i - 1] = kDeadInterval;
@@ -229,6 +230,7 @@ auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results,
+    std::uint32_t const window_len,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow> {
   auto const query_id = overlaps.front().lhs_id;
@@ -239,7 +241,8 @@ auto CreateWindowsFromAlignments(
 
   auto windows = WindowIntervalsToWindows(
       reads[query_id]->inflated_len,
-      CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate)));
+      CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate),
+                          window_len));
 
   BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
                             windows);

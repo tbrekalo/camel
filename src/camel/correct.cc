@@ -104,7 +104,8 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
                   if (--alignment_counts[read_id] == 0U) {
                     windowing_registry[task_queue.Push(detail::WindowArgPack(
                         reads, overlaps[read_id], alignments[read_id],
-                        coverage_estimate))] = read_id;
+                        correct_cfg.correct_window, coverage_estimate))] =
+                        read_id;
 
                     ++n_aligned;
                   }
