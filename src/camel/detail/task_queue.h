@@ -12,11 +12,11 @@ namespace camel::detail {
 using TaskIdType = std::uint64_t;
 
 using AlignmentResult = EdlibAlignResult;
-using WindowResult = std::vector<ReferenceWindow>;
-using ConsensusResult = std::unique_ptr<biosoup::NucleicAcid>;
+using WindowConstructResult = std::vector<ReferenceWindow>;
+using WindowConsensusResult = std::string;
 
 using ResultVariant =
-    std::variant<AlignmentResult, WindowResult, ConsensusResult>;
+    std::variant<AlignmentResult, WindowConstructResult, WindowConsensusResult>;
 
 struct TaskResult {
   TaskIdType task_id;
@@ -26,13 +26,17 @@ struct TaskResult {
 using AlignmentArgPack =
     std::tuple<std::span<std::unique_ptr<biosoup::NucleicAcid> const>,
                biosoup::Overlap>;
-using WindowArgPack =
+using WindowConstructArgPack =
     std::tuple<std::span<std::unique_ptr<biosoup::NucleicAcid> const>,
                std::span<biosoup::Overlap const>,
                std::span<EdlibAlignResult const>, std::uint32_t const,
                std::uint32_t const>;
 
-using ArgsPack = std::variant<AlignmentArgPack, WindowArgPack>;
+using WindowConsensusArgPack =
+    std::tuple<std::string_view, ReferenceWindowView, POAConfig>;
+
+using ArgsPack = std::variant<AlignmentArgPack, WindowConstructArgPack,
+                              WindowConsensusArgPack>;
 
 class TaskQueue {
  public:

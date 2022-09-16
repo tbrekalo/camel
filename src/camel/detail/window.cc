@@ -1,8 +1,25 @@
 #include "window.h"
 
 #include "call_sites.h"
+#include "spoa/alignment_engine.hpp"
+#include "spoa/graph.hpp"
+#include "tbb/enumerable_thread_specific.h"
 
 namespace camel::detail {
+
+static auto AlignmentEngines =
+    tbb::enumerable_thread_specific<std::unique_ptr<spoa::AlignmentEngine>>();
+
+static auto GetAlignmentEngine(POAConfig const config)
+    -> spoa::AlignmentEngine& {
+  auto& engine = AlignmentEngines.local();
+  if (!engine) {
+    engine = spoa::AlignmentEngine::Create(
+        spoa::AlignmentType::kNW, config.match, config.mismatch, config.gap);
+  }
+
+  return *engine;
+}
 
 [[nodiscard]] static auto CalcWindowIntervals(
     std::vector<std::uint32_t> error_sites, std::uint32_t window_len)
@@ -256,6 +273,55 @@ auto CreateWindowsFromAlignments(
                 edlibFreeAlignResult);
 
   return windows;
+}
+
+auto ReleaseAlignmentEngines() -> std::size_t {
+  auto const dst = AlignmentEngines.size();
+  AlignmentEngines.clear();
+
+  return dst;
+}
+
+auto WindowConsensus(std::string_view backbone_view,
+                     ReferenceWindowView ref_window_view, POAConfig poa_cfg)
+    -> std::string {
+  auto& alignment_engine = detail::GetAlignmentEngine(poa_cfg);
+  auto graph = spoa::Graph();
+
+  {
+    auto local_backbone_str = std::string(backbone_view);
+    graph.AddAlignment(spoa::Alignment(), local_backbone_str);
+  }
+
+  auto const [win_ref_intv, aligned_segments] = ref_window_view;
+  auto const window_length = IntervalLength(win_ref_intv);
+
+  for (auto const& [alignment_interval, bases] : aligned_segments) {
+    auto const alignment_len = IntervalLength(alignment_interval);
+    if (alignment_len < window_length * detail::kSmallWindowPercent) {
+      continue;
+    }
+
+    auto const legal_start = window_length * detail::kAllowedFuzzPercent;
+    auto const legal_end = window_length - legal_start;
+
+    auto alignment = spoa::Alignment();
+    if (alignment_interval.first <= legal_start &&
+        legal_end <= alignment_interval.last) {
+      alignment = alignment_engine.Align(bases, graph);
+    } else {
+      auto mapping = std::vector<spoa::Graph::Node const*>();
+      auto subgraph = graph.Subgraph(alignment_interval.first,
+                                     alignment_interval.last - 1, &mapping);
+
+      alignment = alignment_engine.Align(bases, subgraph);
+      subgraph.UpdateAlignment(mapping, &alignment);
+    }
+
+    graph.AddAlignment(alignment, bases);
+  }
+
+  return graph.GenerateConsensus();
 }
 
 }  // namespace camel::detail
