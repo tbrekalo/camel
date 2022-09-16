@@ -8,6 +8,7 @@
 #include "alignment.h"
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
+#include "camel/poa_config.h"
 #include "interval.h"
 
 namespace camel::detail {
@@ -26,12 +27,24 @@ struct ReferenceWindow {
   std::vector<AlignedSegment> aligned_segments;
 };
 
+struct ReferenceWindowView {
+  Interval interval;
+  std::span<AlignedSegment> aligned_segments;
+};
+
 [[nodiscard]] auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results,
+    std::uint32_t const target_window_len,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow>;
+
+auto ReleaseAlignmentEngines() -> std::size_t;
+
+[[nodiscard]] auto WindowConsensus(std::string_view backbone_view,
+                                   ReferenceWindowView, POAConfig poa_cfg)
+    -> std::string;
 
 }  // namespace camel::detail
 
