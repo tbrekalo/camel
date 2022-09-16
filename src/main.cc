@@ -25,10 +25,10 @@ auto main(int argc, char** argv) -> int {
   /* clang-format off */
   options.add_options("serialization arguments")
     ("d,dst", "output destination folder",
-      cxxopts::value<std::string>()->default_value("./camel_out"))
-    ("o,n_overlaps", "number of overlaps per read to keep",
-      cxxopts::value<std::size_t>()->default_value("32"));
+      cxxopts::value<std::string>()->default_value("./camel_out"));
   options.add_options("correction arguments")
+    ("o,n_overlaps", "number of overlaps per read to keep",
+      cxxopts::value<std::size_t>()->default_value("64"))
     ("m,match", "score for matching bases",
       cxxopts::value<std::int8_t>()->default_value("3"))
     ("n,mismatch", "score for mismatching bases",
@@ -36,7 +36,9 @@ auto main(int argc, char** argv) -> int {
     ("g,gap", "gap penalty (must be nagative)",
       cxxopts::value<std::int8_t>()->default_value("-4"))
     ("w,window_length", "targeted correction window len",
-      cxxopts::value<std::uint32_t>()->default_value("320"));
+      cxxopts::value<std::uint32_t>()->default_value("500"))
+    ("q,quality", "minimum read average quality",
+      cxxopts::value<std::uint32_t>()->default_value("10"));
   options.add_options("utility arguments")
     ("t,threads", "number of threads avalable for execution",
             cxxopts::value<std::uint32_t>());
