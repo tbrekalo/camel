@@ -29,9 +29,15 @@ struct ArgPackTaskTraits<AlignmentArgPack> {
 };
 
 template <>
-struct ArgPackTaskTraits<WindowArgPack> {
+struct ArgPackTaskTraits<WindowConstructArgPack> {
   static constexpr auto function = CreateWindowsFromAlignments;
   static constexpr auto priority = 1;
+};
+
+template <>
+struct ArgPackTaskTraits<WindowConsensusArgPack> {
+  static constexpr auto function = WindowConsensus;
+  static constexpr auto priority = 0;
 };
 
 TaskQueue::TaskQueue() : pimpl_(std::make_shared<Impl>()) {}
