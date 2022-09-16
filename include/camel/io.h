@@ -38,14 +38,7 @@ CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
  */
 CAMEL_EXPORT auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-    std::filesystem::path const& dst_folder) -> void;
-/**
- * @brief multithreaded sequence storage
- */
-CAMEL_EXPORT auto StoreSequences(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-    std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
-    -> void;
+    std::filesystem::path const& dst_file) -> void;
 
 /**
  * @brief loads overlaps, keeps the best one for each read

@@ -156,30 +156,9 @@ auto LoadSequences(std::filesystem::path const& path)
 auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_folder) -> void {
-  StoreSequences(seqs, dst_folder, detail::kDefaultSeqStorageFileSz);
-}
-
-auto StoreSequences(
-    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-    std::filesystem::path const& dst_folder, std::uint64_t dst_file_cap)
-    -> void {
   if (seqs.empty()) {
     return;
   }
-
-  auto const find_batch_last =
-      [](std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-             first,
-         std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator
-             last,
-         std::uint64_t const batch_cap)
-      -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>::const_iterator {
-    for (auto batch_sz = 0UL; batch_sz < batch_cap && first != last; ++first) {
-      batch_sz += 2UL * ((*first)->inflated_len);
-    }
-
-    return first;
-  };
 
   auto const is_fasta = seqs.front()->block_quality.empty();
 
@@ -215,30 +194,14 @@ auto StoreSequences(
   };
 
   {
-    auto batch_id = 0U;
-    auto task_group = tbb::task_group();
-    for (auto first = seqs.cbegin(); first != seqs.cend(); ++batch_id) {
-      auto const last = find_batch_last(first, seqs.cend(), dst_file_cap);
-      task_group.run(
-          [&dst_folder, is_fasta, store_fn, first, last, batch_id]() -> void {
-            auto local_first = first;
-            auto local_last = last;
-            auto const dst_file_path =
-                dst_folder / (fmt::format("corrected_batch_{:04d}", batch_id) +
-                              (is_fasta ? ".fa" : ".fq"));
+    auto const dst_file_path = dst_folder / (fmt::format("reads") +
+                                             (is_fasta ? ".fa" : ".fq"));
 
-            auto ofstrm =
-                std::fstream(dst_file_path, std::ios::out | std::ios::trunc);
-
-            for (; local_first != local_last; ++local_first) {
-              store_fn(ofstrm, *first);
-            }
-          });
-
-      first = last;
+    auto ofstrm =
+        std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
+    for (auto const& seq : seqs) {
+      store_fn(ofstrm, seq);
     }
-
-    task_group.wait();
   }
 }
 
@@ -317,10 +280,9 @@ auto LoadOverlaps(
 
     for (auto& ovlp_ptr : ovlps) {
       auto ovlp = transform_overlap(std::move(ovlp_ptr));
-      if (ovlp.lhs_id != ovlp.rhs_id && detail::OverlapLength(ovlp) > 1280U &&
+      if (ovlp.lhs_id != ovlp.rhs_id && detail::OverlapLength(ovlp) > 640U &&
           detail::OverlapError(ovlp) < 0.2) {
         store_ovlp(ovlp);
-        store_ovlp(detail::ReverseOverlap(ovlp));
       }
     }
   }
