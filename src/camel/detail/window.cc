@@ -196,7 +196,7 @@ static auto KeepHaploidOverlaps(
         scores_indices.end(),
         [](std::pair<double, std::uint32_t> const lhs,
            std::pair<double, std::uint32_t> const rhs) -> bool {
-          return lhs.second < rhs.second;
+          return lhs.first < rhs.first;
         });
 
     auto const median_snp_rate =
@@ -220,6 +220,11 @@ static auto KeepHaploidOverlaps(
         edlibFreeAlignResult(edlib_results[i]);
       }
     }
+  } else {
+    haploid_overlaps.insert(haploid_overlaps.end(), overlaps.begin(),
+                            overlaps.end());
+    haploid_alignments.insert(haploid_alignments.end(), edlib_results.begin(),
+                              edlib_results.end());
   }
 
   return std::make_pair(std::move(haploid_overlaps),
