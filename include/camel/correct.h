@@ -6,15 +6,10 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
+#include "camel/poa_config.h"
 #include "camel/export.h"
 
 namespace camel {
-
-CAMEL_EXPORT struct POAConfig {
-  std::int8_t match = 3;
-  std::int8_t mismatch = -5;
-  std::int8_t gap = -4;
-};
 
 CAMEL_EXPORT struct CorrectConfig {
   POAConfig poa_cfg;
