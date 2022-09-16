@@ -114,7 +114,7 @@ auto main(int argc, char** argv) -> int {
     task_arena.execute([&]() -> void {
       auto corrected_reads = camel::ErrorCorrect(correct_cfg, std::move(reads),
                                                  std::move(overlaps));
-      camel::StoreSequences(corrected_reads, dst_path, 1U << 28U);
+      camel::StoreSequences(corrected_reads, dst_path);
     });
     timer.Stop();
     fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
