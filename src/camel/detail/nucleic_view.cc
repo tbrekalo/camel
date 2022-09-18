@@ -8,6 +8,10 @@ NucleicView::NucleicView(biosoup::NucleicAcid const* nucleic_acid,
       fetch_code_impl_(is_reverse_complement ? &FetchReverseComplementCodeImpl
                                              : &FetchCodeImpl) {}
 
+auto NucleicView::InflatedLenght() const noexcept -> std::uint32_t {
+  return nucleic_acid_->inflated_len;
+}
+
 auto NucleicView::Code(std::size_t const pos) const noexcept -> std::uint8_t {
   return fetch_code_impl_(nucleic_acid_, pos);
 }
