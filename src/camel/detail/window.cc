@@ -21,130 +21,56 @@ static auto GetAlignmentEngine(POAConfig const config)
   return *engine;
 }
 
-[[nodiscard]] static auto CalcWindowIntervals(
-    std::vector<std::uint32_t> error_sites, std::uint32_t window_len)
-    -> std::vector<Interval> {
-  auto dst = std::vector<Interval>(error_sites.size());
-  std::transform(error_sites.cbegin(), error_sites.cend(), dst.begin(),
-                 [](std::uint32_t const pos) -> Interval {
-                   return {pos, pos};
-                 });
-
-  auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
-  auto constexpr kDeadInterval = Interval{1, 0};
-
-  for (auto can_terminate = false; !can_terminate;) {
-    can_terminate = true;
-    for (auto i = 0; i < dst.size(); ++i) {
-      auto const lhs_dist = i > 0 && dst[i - 1] != kDeadInterval
-                                ? dst[i].last - dst[i - 1].first
-                                : kSentinelDist;
-      auto const rhs_dist = i + 1 < dst.size() && dst[i + 1] != kDeadInterval
-                                ? dst[i + 1].last - dst[i].first
-                                : kSentinelDist;
-
-      if (lhs_dist <= window_len || rhs_dist <= window_len) {
-        if (lhs_dist < rhs_dist) {
-          dst[i].first = dst[i - 1].first;
-          dst[i - 1] = kDeadInterval;
-        } else {
-          dst[i].last = dst[i + 1].last;
-          std::swap(dst[i], dst[i + 1]);
-
-          dst[i] = kDeadInterval;
-          if (i > 0) {
-            std::swap(dst[i - 1], dst[i]);
-          }
-        }
-        can_terminate = false;
-      }
-    }
-
-    dst.erase(std::stable_partition(dst.begin(), dst.end(),
-                                    [kDeadInterval](Interval interval) -> bool {
-                                      return interval != kDeadInterval;
-                                    }),
-              dst.end());
-  }
-
-  return dst;
-}
-
-[[nodiscard]] static auto WindowIntervalsToWindows(
-    std::uint32_t const read_len, std::vector<Interval> intervals)
+static auto FindWindowIntervals(NucleicView read_view,
+                                std::span<CoverageSignals> coverage,
+                                std::uint32_t const coverage_estimate)
     -> std::vector<ReferenceWindow> {
-  auto dst = std::vector<ReferenceWindow>(intervals.size());
-  auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
-  for (auto i = 0U; i < intervals.size(); ++i) {
-    auto const default_lhs_shift = 14U;
-    auto const mid_point_lhs_shift =
-        (i > 0U ? (intervals[i].first - intervals[i - 1].last)
-                : intervals[i].first) /
-        2U;
+  auto dst = std::vector<ReferenceWindow>();
+  auto stack = std::vector<Interval>();
 
-    auto const default_rhs_shift = 14U;
-    auto const mid_point_rhs_shift =
-        (i + 1U < intervals.size() ? intervals[i + 1].first - intervals[i].last
-                                   : read_len - 1U - intervals[i].last) /
-        2U;
+  auto prev_interval = Interval{.first = 0U, .last = 0U};
+  auto active_interval = Interval{.first = 0U, .last = 0U};
 
-    auto const lhs_shift = std::min(default_lhs_shift, mid_point_lhs_shift);
-    auto const rhs_shift = std::min(default_rhs_shift, mid_point_rhs_shift);
+  auto const append_interval = [&dst, &stack](Interval arg_interval) -> void {
+    stack.push_back(arg_interval);
+    while (!stack.empty()) {
+      auto const interval = stack.back();
+      stack.pop_back();
 
-    dst[i].interval = {.first = intervals[i].first - lhs_shift,
-                       .last = intervals[i].last + rhs_shift};
+      if (IntervalLength(interval) <= 100U) {
+        dst.push_back(ReferenceWindow{.interval = interval});
+      } else {
+        stack.push_back(
+            Interval{.first = interval.first, .last = interval.last / 2});
+        stack.push_back(
+            Interval{.first = interval.last / 2 + 1, .last = interval.last});
+      }
+    }
+  };
+
+  for (auto i = 0U; i < coverage.size(); ++i) {
+    if (IsStableSite(coverage[i], coverage_estimate, read_view.Code(i), 0.8,
+                     0.2) &&
+        i + 1 != coverage.size()) {
+      active_interval.last = i;
+    } else if (IntervalLength(active_interval) > 10U ||
+               i + 1 == coverage.size()) {
+      if (prev_interval.last != 0U) {
+        append_interval(Interval{.first = prev_interval.last - 4U,
+                                 .last = active_interval.first + 4U});
+      }
+      prev_interval =
+          std::exchange(active_interval, Interval{.first = i, .last = i});
+    }
   }
+
+  decltype(dst)(dst.begin(), dst.end()).swap(dst);
+  std::sort(dst.begin(), dst.end(),
+            [](ReferenceWindow const& lhs, ReferenceWindow const& rhs) -> bool {
+              return lhs.interval.first < rhs.interval.first;
+            });
 
   return dst;
-}
-
-static auto BindReadSegmentsToWindows(
-    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    std::span<biosoup::Overlap const> overlaps,
-    std::span<EdlibAlignResult const> edlib_results,
-    std::span<ReferenceWindow> windows) -> void {
-  for (auto i = 0U; i < overlaps.size(); ++i) {
-    auto win_idx = std::distance(
-        windows.begin(),
-        std::upper_bound(windows.begin(), windows.end(), overlaps[i].lhs_begin,
-                         [](std::uint32_t const ovlp_start,
-                            ReferenceWindow const& ref_window) -> bool {
-                           return ovlp_start < ref_window.interval.last;
-                         }));
-
-    if (win_idx >= windows.size()) {
-      continue;
-    }
-
-    auto lhs_first = overlaps[i].lhs_begin;
-    auto rhs_first = overlaps[i].rhs_begin;
-
-    auto lhs_curr = lhs_first;
-    auto rhs_curr = rhs_first;
-
-    auto const rhs_view =
-        NucleicView(reads[overlaps[i].rhs_id].get(), !overlaps[i].strand);
-    for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
-      if (lhs_curr == windows[win_idx].interval.first) {
-        lhs_first = lhs_curr;
-        rhs_first = rhs_curr;
-      }
-
-      lhs_curr += (edlib_results[i].alignment[j] != 2);
-      rhs_curr += (edlib_results[i].alignment[j] != 1);
-
-      if (lhs_curr == windows[win_idx].interval.last) {
-        windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
-            .alignment_local_interval = LocalizeInterval(
-                windows[win_idx].interval.first, {lhs_first, lhs_curr}),
-            .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first)});
-
-        if (++win_idx >= windows.size()) {
-          break;
-        }
-      }
-    }
-  }
 }
 
 static auto KeepHaploidOverlaps(
@@ -161,8 +87,12 @@ static auto KeepHaploidOverlaps(
   auto snp_sites = std::vector<std::uint32_t>();
   snp_sites.reserve(coverage.size() / 10U);
 
+  auto read_view = NucleicView(reads[query_id].get(), false);
+
   for (auto i = 0U; i < coverage.size(); ++i) {
-    if (IsSnpSite(coverage[i], global_coverage_estimate)) {
+    if (IsStableSite(coverage[i], global_coverage_estimate, read_view.Code(i),
+                     0.25, 0.4) &&
+        IsSnpSite(coverage[i], global_coverage_estimate, 0.8)) {
       snp_sites.push_back(i);
     }
   }
@@ -248,6 +178,57 @@ static auto KeepHaploidOverlaps(
                         std::move(haploid_alignments));
 }
 
+static auto BindReadSegmentsToWindows(
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap const> overlaps,
+    std::span<EdlibAlignResult const> edlib_results,
+    std::vector<ReferenceWindow> windows) -> std::vector<ReferenceWindow> {
+  for (auto i = 0U; i < overlaps.size(); ++i) {
+    auto win_idx = std::distance(
+        windows.begin(),
+        std::upper_bound(windows.begin(), windows.end(), overlaps[i].lhs_begin,
+                         [](std::uint32_t const ovlp_start,
+                            ReferenceWindow const& ref_window) -> bool {
+                           return ovlp_start < ref_window.interval.last;
+                         }));
+
+    if (win_idx >= windows.size()) {
+      continue;
+    }
+
+    auto lhs_first = overlaps[i].lhs_begin;
+    auto rhs_first = overlaps[i].rhs_begin;
+
+    auto lhs_curr = lhs_first;
+    auto rhs_curr = rhs_first;
+
+    auto const rhs_view =
+        NucleicView(reads[overlaps[i].rhs_id].get(), !overlaps[i].strand);
+    for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
+      if (lhs_curr == windows[win_idx].interval.first) {
+        lhs_first = lhs_curr;
+        rhs_first = rhs_curr;
+      }
+
+      lhs_curr += (edlib_results[i].alignment[j] != 2);
+      rhs_curr += (edlib_results[i].alignment[j] != 1);
+
+      if (lhs_curr == windows[win_idx].interval.last) {
+        windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
+            .alignment_local_interval = LocalizeInterval(
+                windows[win_idx].interval.first, {lhs_first, lhs_curr}),
+            .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first)});
+
+        if (++win_idx >= windows.size()) {
+          break;
+        }
+      }
+    }
+  }
+
+  return windows;
+}
+
 auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
@@ -261,13 +242,10 @@ auto CreateWindowsFromAlignments(
   auto [haploid_overlaps, haploid_alignments] = KeepHaploidOverlaps(
       reads, overlaps, edlib_results, coverage, global_coverage_estimate);
 
-  auto windows = WindowIntervalsToWindows(
-      reads[query_id]->inflated_len,
-      CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate),
-                          window_len));
-
-  BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
-                            windows);
+  auto windows = BindReadSegmentsToWindows(
+      reads, overlaps, haploid_alignments,
+      FindWindowIntervals(NucleicView(reads[query_id].get(), false), coverage,
+                          global_coverage_estimate));
 
   std::for_each(haploid_alignments.begin(), haploid_alignments.end(),
                 edlibFreeAlignResult);
