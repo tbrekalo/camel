@@ -48,7 +48,7 @@ static auto FindWindowIntervals(NucleicView read_view,
     }
   };
 
-  for (auto i = 0U; i < coverage.size(); ++i) {
+  for (auto i = 0U; i < read_view.InflatedLenght(); ++i) {
     if (IsStableSite(coverage[i], coverage_estimate, read_view.Code(i), 0.8,
                      0.2) &&
         i + 1 != coverage.size()) {
@@ -89,7 +89,7 @@ static auto KeepHaploidOverlaps(
 
   auto read_view = NucleicView(reads[query_id].get(), false);
 
-  for (auto i = 0U; i < coverage.size(); ++i) {
+  for (auto i = 0U; i < read_view.InflatedLenght(); ++i) {
     if (IsStableSite(coverage[i], global_coverage_estimate, read_view.Code(i),
                      0.25, 0.4) &&
         IsSnpSite(coverage[i], global_coverage_estimate, 0.8)) {
@@ -119,7 +119,8 @@ static auto KeepHaploidOverlaps(
                snp_sites[snp_site_idx] < lhs_pos) {
           ++snp_site_idx;
         }
-        if (snp_sites[snp_site_idx] == lhs_pos) {
+        if (snp_site_idx < snp_sites.size() &&
+            snp_sites[snp_site_idx] == lhs_pos) {
           normed_snp_rate[ovlp_idx] += edlib_res.alignment[i] != 0;
         }
       }
@@ -233,7 +234,6 @@ auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results,
-    std::uint32_t const window_len,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow> {
   auto const query_id = overlaps.front().lhs_id;
@@ -243,7 +243,7 @@ auto CreateWindowsFromAlignments(
       reads, overlaps, edlib_results, coverage, global_coverage_estimate);
 
   auto windows = BindReadSegmentsToWindows(
-      reads, overlaps, haploid_alignments,
+      reads, haploid_overlaps, haploid_alignments,
       FindWindowIntervals(NucleicView(reads[query_id].get(), false), coverage,
                           global_coverage_estimate));
 
