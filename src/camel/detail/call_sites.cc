@@ -25,7 +25,7 @@ auto IsSnpSite(CoverageSignals const& covg_signals,
                std::uint32_t const covg_estimate, double const dominance_ratio)
     -> bool {
   auto const covg = static_cast<double>(
-      std::accumulate(covg_signals.val.cbegin(), covg_signals.val.cend(),
+      std::accumulate(covg_signals.val.cbegin(), covg_signals.val.cend() + 4U,
                       std::uint16_t(0), std::plus<std::uint16_t>{}));
 
   for (auto i = 0U; i < 4U; ++i) {
