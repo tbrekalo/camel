@@ -63,7 +63,7 @@ auto CalculateCoverage(
   auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len + 1U);
 
   for (auto i = 0U; i < reads[query_id]->inflated_len; ++i) {
-    ++dst[i].signals[reads[query_id]->Code(i)];
+    ++dst[i].val[reads[query_id]->Code(i)];
   }
 
   for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
@@ -82,16 +82,16 @@ auto CalculateCoverage(
       switch (edlib_res.alignment[i]) {
         case 0:  // match
         case 3:  // mismatch
-          ++dst[lhs_pos].signals[rhs_view.Code(rhs_pos)];
+          ++dst[lhs_pos].val[rhs_view.Code(rhs_pos)];
           ++lhs_pos;
           ++rhs_pos;
           break;
         case 1:  // deletion on the query
-          ++dst[lhs_pos].signals[CoverageSignals::kDelIdx];
+          ++dst[lhs_pos].val[CoverageSignals::kDelIdx];
           ++lhs_pos;
           break;
         case 2:  // insertion on the query
-          ++dst[lhs_pos - 1U].signals[CoverageSignals::kInsIdx];
+          ++dst[lhs_pos - 1U].val[CoverageSignals::kInsIdx];
           ++rhs_pos;
           break;
         default:
