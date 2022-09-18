@@ -110,7 +110,6 @@ set(camel_SOURCES
   ${PROJECT_SOURCE_DIR}/src/camel/detail/nucleic_view.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overlap.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/overload.cc
-  ${PROJECT_SOURCE_DIR}/src/camel/detail/task_queue.cc
   ${PROJECT_SOURCE_DIR}/src/camel/detail/window.cc
 
   ${PROJECT_SOURCE_DIR}/src/camel/correct.cc
