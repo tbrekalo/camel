@@ -15,7 +15,7 @@
 namespace camel::detail {
 
 struct CoverageSignals {
-  std::array<std::uint16_t, 6U> signals;
+  std::array<std::uint16_t, 6U> val;
 
   static inline auto constexpr kDelIdx = 4U;
   static inline auto constexpr kInsIdx = 5U;
