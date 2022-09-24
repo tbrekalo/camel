@@ -21,6 +21,14 @@ auto IsStableSite(CoverageSignals const& covg_signals,
   return covg > covg_estimate && match_rate > alfa && ins_rate < beta;
 }
 
+auto IsUnstableSite(CoverageSignals const& covg_signals,
+                    std::uint32_t const covg_estimate,
+                    std::uint8_t const base_code, double const min_match_rate,
+                    double const max_insertion_rate) -> bool {
+  return !IsStableSite(covg_signals, covg_estimate, base_code, min_match_rate,
+                       max_insertion_rate);
+}
+
 auto IsSnpSite(CoverageSignals const& covg_signals,
                std::uint32_t const covg_estimate, double const dominance_ratio)
     -> bool {

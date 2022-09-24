@@ -51,8 +51,8 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
 
     if (auto ticket = ++report_ticket; ticket == report_ticket) {
       fmt::print(stderr,
-                 "\r[camel::ErrorCorrect]({:12.3f}) aligned {:3.3f} | polished "
-                 "{:3.3f}",
+                 "\r[camel::ErrorCorrect]({:12.3f}) aligned {:3.3f}% | polished "
+                 "{:3.3f}%",
                  function_timer.Lap(), to_percent(n_aligned),
                  to_percent(n_polished));
     }
@@ -75,7 +75,8 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         report_state();
 
         auto windows = detail::CreateWindowsFromAlignments(
-            reads, overlaps[read_id], alignments, coverage_estimate);
+            reads, overlaps[read_id], alignments, correct_cfg.correct_window,
+            coverage_estimate);
 
         auto backbone = reads[read_id]->InflateData();
         auto window_consensus = std::vector<std::string>(windows.size());
@@ -99,7 +100,8 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
           for (auto win_idx = 0U; win_idx < windows.size(); ++win_idx) {
             auto const& interval = windows[win_idx].interval;
 
-            consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
+            consensus.insert(consensus.end(), 
+                             std::next(backbone.begin(), prev),
                              std::next(backbone.begin(), interval.first));
             consensus += window_consensus[win_idx];
             prev = interval.last;
