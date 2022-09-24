@@ -36,6 +36,7 @@ struct ReferenceWindowView {
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results,
+    std::uint32_t const window_len,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow>;
 
