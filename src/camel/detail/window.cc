@@ -1,5 +1,7 @@
 #include "window.h"
 
+#include <algorithm>
+
 #include "call_sites.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/graph.hpp"
@@ -66,6 +68,12 @@ static auto GetAlignmentEngine(POAConfig const config)
                                     }),
               dst.end());
   }
+
+  dst.erase(std::stable_partition(dst.begin(), dst.end(),
+                                  [](Interval interval) -> bool {
+                                    return IntervalLength(interval) > 10U;
+                                  }),
+            dst.end());
 
   return dst;
 }
@@ -162,7 +170,7 @@ static auto KeepHaploidOverlaps(
   snp_sites.reserve(coverage.size() / 10U);
 
   for (auto i = 0U; i < coverage.size(); ++i) {
-    if (IsSnpSite(coverage[i], global_coverage_estimate)) {
+    if (IsSnpSite(coverage[i], global_coverage_estimate, 0.8)) {
       snp_sites.push_back(i);
     }
   }
@@ -248,29 +256,47 @@ static auto KeepHaploidOverlaps(
                         std::move(haploid_alignments));
 }
 
+static auto CallErrorSites(NucleicView read,
+                           std::span<CoverageSignals const> coverage_signals,
+                           std::uint32_t covg_estimate,
+                           double const min_match_reate,
+                           double const max_insertion_rate)
+    -> std::vector<std::uint32_t> {
+  auto dst = std::vector<std::uint32_t>();
+
+  for (auto i = 0U; i < read.InflatedLenght(); ++i) {
+    if (IsUnstableSite(coverage_signals[i], covg_estimate, read.Code(i),
+                       min_match_reate, max_insertion_rate)) {
+      dst.push_back(i);
+    }
+  }
+
+  return dst;
+}
+
 auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
-    std::span<EdlibAlignResult const> edlib_results,
+    std::span<EdlibAlignResult const> alignments,
     std::uint32_t const window_len,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow> {
   auto const query_id = overlaps.front().lhs_id;
-  auto coverage = CalculateCoverage(reads, overlaps, edlib_results);
+  auto coverage = CalculateCoverage(reads, overlaps, alignments);
 
-  auto [haploid_overlaps, haploid_alignments] = KeepHaploidOverlaps(
-      reads, overlaps, edlib_results, coverage, global_coverage_estimate);
+  // auto [haploid_overlaps, haploid_alignments] = KeepHaploidOverlaps(
+  //     reads, overlaps, edlib_results, coverage, global_coverage_estimate);
 
   auto windows = WindowIntervalsToWindows(
       reads[query_id]->inflated_len,
-      CalcWindowIntervals(CallErrorSites(coverage, global_coverage_estimate),
-                          window_len));
+      CalcWindowIntervals(
+          CallErrorSites(NucleicView(reads[query_id].get(), false), coverage,
+                         global_coverage_estimate, 0.7, 0.3),
+          window_len));
 
-  BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
-                            windows);
+  BindReadSegmentsToWindows(reads, overlaps, alignments, windows);
 
-  std::for_each(haploid_alignments.begin(), haploid_alignments.end(),
-                edlibFreeAlignResult);
+  std::for_each(alignments.begin(), alignments.end(), edlibFreeAlignResult);
 
   return windows;
 }
@@ -309,7 +335,7 @@ auto WindowConsensus(std::string_view backbone_view,
     if (alignment_interval.first <= legal_start &&
         legal_end <= alignment_interval.last) {
       alignment = alignment_engine.Align(bases, graph);
-    } else {
+    } else if (IntervalLength(alignment_interval) > kWinPadding) {
       auto mapping = std::vector<spoa::Graph::Node const*>();
       auto subgraph = graph.Subgraph(alignment_interval.first,
                                      alignment_interval.last - 1, &mapping);
@@ -318,7 +344,9 @@ auto WindowConsensus(std::string_view backbone_view,
       subgraph.UpdateAlignment(mapping, &alignment);
     }
 
-    graph.AddAlignment(alignment, bases);
+    if (alignment.empty()) {
+      graph.AddAlignment(alignment, bases);
+    }
   }
 
   return graph.GenerateConsensus();
