@@ -118,4 +118,4 @@ if __name__ == '__main__':
         quast_tsv_report = quast_results_dir.joinpath('report.tsv')
         log_data |= parse_quast_tsv(quast_tsv_report)
 
-        pprint.pprint(log_data, indent=2, width=2)
+        pprint.pprint(log_data, width=2)
