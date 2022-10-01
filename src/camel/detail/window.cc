@@ -23,89 +23,6 @@ static auto GetAlignmentEngine(POAConfig const config)
   return *engine;
 }
 
-[[nodiscard]] static auto CalcWindowIntervals(
-    std::vector<std::uint32_t> error_sites, std::uint32_t window_len)
-    -> std::vector<Interval> {
-  auto dst = std::vector<Interval>(error_sites.size());
-  std::transform(error_sites.cbegin(), error_sites.cend(), dst.begin(),
-                 [](std::uint32_t const pos) -> Interval {
-                   return {pos, pos};
-                 });
-
-  auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
-  auto constexpr kDeadInterval = Interval{1, 0};
-
-  for (auto can_terminate = false; !can_terminate;) {
-    can_terminate = true;
-    for (auto i = 0; i < dst.size(); ++i) {
-      auto const lhs_dist = i > 0 && dst[i - 1] != kDeadInterval
-                                ? dst[i].last - dst[i - 1].first
-                                : kSentinelDist;
-      auto const rhs_dist = i + 1 < dst.size() && dst[i + 1] != kDeadInterval
-                                ? dst[i + 1].last - dst[i].first
-                                : kSentinelDist;
-
-      if (lhs_dist <= window_len || rhs_dist <= window_len) {
-        if (lhs_dist < rhs_dist) {
-          dst[i].first = dst[i - 1].first;
-          dst[i - 1] = kDeadInterval;
-        } else {
-          dst[i].last = dst[i + 1].last;
-          std::swap(dst[i], dst[i + 1]);
-
-          dst[i] = kDeadInterval;
-          if (i > 0) {
-            std::swap(dst[i - 1], dst[i]);
-          }
-        }
-        can_terminate = false;
-      }
-    }
-
-    dst.erase(std::stable_partition(dst.begin(), dst.end(),
-                                    [kDeadInterval](Interval interval) -> bool {
-                                      return interval != kDeadInterval;
-                                    }),
-              dst.end());
-  }
-
-  dst.erase(std::stable_partition(dst.begin(), dst.end(),
-                                  [](Interval interval) -> bool {
-                                    return IntervalLength(interval) > 10U;
-                                  }),
-            dst.end());
-
-  return dst;
-}
-
-[[nodiscard]] static auto WindowIntervalsToWindows(
-    std::uint32_t const read_len, std::vector<Interval> intervals)
-    -> std::vector<ReferenceWindow> {
-  auto dst = std::vector<ReferenceWindow>(intervals.size());
-  auto constexpr kSentinelDist = std::numeric_limits<std::uint32_t>::max();
-  for (auto i = 0U; i < intervals.size(); ++i) {
-    auto const default_lhs_shift = 14U;
-    auto const mid_point_lhs_shift =
-        (i > 0U ? (intervals[i].first - intervals[i - 1].last)
-                : intervals[i].first) /
-        2U;
-
-    auto const default_rhs_shift = 14U;
-    auto const mid_point_rhs_shift =
-        (i + 1U < intervals.size() ? intervals[i + 1].first - intervals[i].last
-                                   : read_len - 1U - intervals[i].last) /
-        2U;
-
-    auto const lhs_shift = std::min(default_lhs_shift, mid_point_lhs_shift);
-    auto const rhs_shift = std::min(default_rhs_shift, mid_point_rhs_shift);
-
-    dst[i].interval = {.first = intervals[i].first - lhs_shift,
-                       .last = intervals[i].last + rhs_shift};
-  }
-
-  return dst;
-}
-
 static auto BindReadSegmentsToWindows(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
@@ -169,8 +86,12 @@ static auto KeepHaploidOverlaps(
   auto snp_sites = std::vector<std::uint32_t>();
   snp_sites.reserve(coverage.size() / 10U);
 
-  for (auto i = 0U; i < coverage.size(); ++i) {
-    if (IsSnpSite(coverage[i], global_coverage_estimate, 0.8)) {
+  auto read_view = NucleicView(reads[query_id].get(), false);
+
+  for (auto i = 0U; i < read_view.InflatedLenght(); ++i) {
+    if (IsStableSite(coverage[i], global_coverage_estimate, read_view.Code(i),
+                     0.25, 0.4) &&
+        IsSnpSite(coverage[i], global_coverage_estimate, 0.8)) {
       snp_sites.push_back(i);
     }
   }
@@ -197,7 +118,8 @@ static auto KeepHaploidOverlaps(
                snp_sites[snp_site_idx] < lhs_pos) {
           ++snp_site_idx;
         }
-        if (snp_sites[snp_site_idx] == lhs_pos) {
+        if (snp_site_idx < snp_sites.size() &&
+            snp_sites[snp_site_idx] == lhs_pos) {
           normed_snp_rate[ovlp_idx] += edlib_res.alignment[i] != 0;
         }
       }
@@ -256,24 +178,6 @@ static auto KeepHaploidOverlaps(
                         std::move(haploid_alignments));
 }
 
-static auto CallErrorSites(NucleicView read,
-                           std::span<CoverageSignals const> coverage_signals,
-                           std::uint32_t covg_estimate,
-                           double const min_match_reate,
-                           double const max_insertion_rate)
-    -> std::vector<std::uint32_t> {
-  auto dst = std::vector<std::uint32_t>();
-
-  for (auto i = 0U; i < read.InflatedLenght(); ++i) {
-    if (IsUnstableSite(coverage_signals[i], covg_estimate, read.Code(i),
-                       min_match_reate, max_insertion_rate)) {
-      dst.push_back(i);
-    }
-  }
-
-  return dst;
-}
-
 auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
@@ -284,19 +188,20 @@ auto CreateWindowsFromAlignments(
   auto const query_id = overlaps.front().lhs_id;
   auto coverage = CalculateCoverage(reads, overlaps, alignments);
 
-  // auto [haploid_overlaps, haploid_alignments] = KeepHaploidOverlaps(
-  //     reads, overlaps, edlib_results, coverage, global_coverage_estimate);
+  auto [haploid_overlaps, haploid_alignments] = KeepHaploidOverlaps(
+      reads, overlaps, alignments, coverage, global_coverage_estimate);
 
-  auto windows = WindowIntervalsToWindows(
-      reads[query_id]->inflated_len,
-      CalcWindowIntervals(
-          CallErrorSites(NucleicView(reads[query_id].get(), false), coverage,
-                         global_coverage_estimate, 0.7, 0.3),
-          window_len));
+  auto read_view = NucleicView(reads[query_id].get(), false);
+  auto windows = std::vector<ReferenceWindow>();
+  for (auto i = 0U; i < read_view.InflatedLenght(); i += window_len) {
+    auto j = std::min(i + window_len, read_view.InflatedLenght());
+    windows.push_back(ReferenceWindow{.interval = {i, j}});
+  }
 
-  BindReadSegmentsToWindows(reads, overlaps, alignments, windows);
-
-  std::for_each(alignments.begin(), alignments.end(), edlibFreeAlignResult);
+  BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
+                            windows);
+  std::for_each(haploid_alignments.begin(), haploid_alignments.end(),
+                edlibFreeAlignResult);
 
   return windows;
 }
@@ -344,9 +249,7 @@ auto WindowConsensus(std::string_view backbone_view,
       subgraph.UpdateAlignment(mapping, &alignment);
     }
 
-    if (alignment.empty()) {
       graph.AddAlignment(alignment, bases);
-    }
   }
 
   return graph.GenerateConsensus();
