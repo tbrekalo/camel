@@ -6,8 +6,8 @@ namespace camel::detail {
 
 auto IsStableSite(CoverageSignals const& covg_signals,
                   std::uint32_t const covg_estimate,
-                  std::uint8_t const base_code, double const alfa,
-                  double const beta) -> bool {
+                  std::uint8_t const base_code, double const min_match_rate,
+                  double const max_insertion_rate) -> bool {
   auto const covg = static_cast<double>(
       std::accumulate(covg_signals.val.cbegin(), covg_signals.val.cend(),
                       std::uint16_t(0), std::plus<std::uint16_t>{}) -
