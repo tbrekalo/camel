@@ -3,30 +3,70 @@ import pprint
 import psutil
 import subprocess
 import time
+import sqlite3
 
 from pathlib import Path
 
-QUAST_COLUMNS = [
-    '# contigs',
-    'Largest contig',
-    'N50',
-    'NG50',
-    'NA50',
-    'NGA50',
-    '# mismatches per 100 kbp',
-    '# indels per 100 kbp',
-    'Largest alignment',
-    'Total aligned length',
-]
+QUAST_COLUMNS = {
+    '# contigs': 'n_contigs',
+    'Largest contig': 'largest_contig',
+    'N50': 'N50',
+    'NG50': 'NG50',
+    'NA50': 'NA50',
+    'NGA50': 'NGA50',
+    '# mismatches per 100 kbp': 'mismatches_per_100kbp',
+    '# indels per 100 kbp': 'indels_per_100kbp',
+    'Largest alignment': 'largest_alignment',
+    'Total aligned length': 'total_aligned_length',
+}
+
+CREATE_CAMEL_RUNS = '''
+CREATE TABLE IF NOT EXISTS camel_runs(
+    camel_version TEXT,
+    comment TEXT,
+    runtime_s INTEGER,
+    peak_memory_MiB INTEGER,
+    n_contigs INTEGER,
+    largest_contig INTEGER,
+    N50 INTEGER,
+    NG50 INTEGER,
+    NA50 INTEGER,
+    NGA50 INTEGER,
+    mismatches_per_100kbp REAL,
+    indels_per_100kbp REAL,
+    largest_alignment INTEGER,
+    total_aligned_length INTEGER
+);'''
+
+
+def get_db_connection(db_path):
+    ''' get cursor to sqlite3 db instance '''
+    return sqlite3.connect(db_path)
+
+
+def create_runs_table_if_not_exists(db_connection):
+    return db_connection.cursor().execute(CREATE_CAMEL_RUNS)
+
+
+def insert_dict_to_runs_table(db_connection, data):
+    cursor = db_connection.cursor()
+
+    columns_str = ', '.join(data.keys())
+    values_str = ', '.join(map(lambda x: f'"{str(x)}"', data.values()))
+    cmd_str = f'INSERT INTO camel_runs ({columns_str}) VALUES ({values_str})'
+
+    cursor.execute(cmd_str)
+    db_connection.commit()
 
 
 def parse_quast_tsv(file):
     ret = {}
     with open(file) as tsv:
         for line in tsv.readlines():
-            name, data = line.strip().rsplit('\t')
-            if name in QUAST_COLUMNS:
-                ret[name] = data
+            tsv_name, data = line.strip().rsplit('\t')
+            db_name = QUAST_COLUMNS.get(tsv_name)
+            if db_name is not None:
+                ret[db_name] = data
 
     return ret
 
@@ -38,7 +78,9 @@ def create_argparser():
     def add_unary_arg(*args, **kwargs):
         dst.add_argument(*args, nargs=1, action='store', **kwargs)
 
+    add_unary_arg('-d', '--database', type=str, default=['camel_dev.db'])
     add_unary_arg('-c', '--comment', type=str,  required=True)
+    add_unary_arg('-v', '--version', type=str, required=True)
     add_unary_arg('-o', '--n_overlaps', type=int,  default=[480])
     add_unary_arg('-t', '--threads', type=int,  default=[1])
     add_unary_arg('-e', '--executable', type=str,
@@ -53,22 +95,22 @@ def create_argparser():
     return dst
 
 
-def popen_time_mem(arg_list):
-    camel_start, camel_end = time.time(), time.time()
+def popen_time_mem(proc_path, arg_list):
+    start, end = time.time(), time.time()
     peek_mem_usage = 0
-    with subprocess.Popen([camel_executable, *camel_args]) as camel_proc:
-        pid = camel_proc.pid
+    with subprocess.Popen([proc_path, *arg_list]) as proc:
+        pid = proc.pid
         pshandle = psutil.Process(pid)
-        while camel_proc.poll() is None:
+        while proc.poll() is None:
             try:
-                camel_end = time.time()
+                end = time.time()
                 peek_mem_usage = max(
                     peek_mem_usage, pshandle.memory_info().rss)
             except:
                 pass
             time.sleep(.5)
 
-    return camel_end - camel_start, peek_mem_usage
+    return end - start, peek_mem_usage
 
 
 if __name__ == '__main__':
@@ -80,8 +122,13 @@ if __name__ == '__main__':
         ''' extract argument from parsed args '''
         return str(getattr(args, name)[0])
 
+    db_path = extract_unary_as_str('database')
     work_dir = Path(extract_unary_as_str('work_dir'))
+
+    camel_version = extract_unary_as_str('version')
     camel_executable = extract_unary_as_str('executable')
+
+    comment = extract_unary_as_str('comment')
 
     camel_args = [
         x for k in ['threads', 'n_overlaps', 'window_length']
@@ -91,8 +138,12 @@ if __name__ == '__main__':
         getattr(args, 'reads'),
     ])
 
-    runtime, peak_memory = popen_time_mem(camel_args)
+    db_connection = get_db_connection(db_path)
+    create_runs_table_if_not_exists(db_connection)
+    runtime, peak_memory = popen_time_mem(camel_executable, camel_args)
     log_data = {
+        'camel_version': camel_version,
+        'comment': comment,
         'runtime_s': runtime,
         'peak_memory_MiB': (peak_memory / (2 ** 20)),
     }
@@ -118,4 +169,4 @@ if __name__ == '__main__':
         quast_tsv_report = quast_results_dir.joinpath('report.tsv')
         log_data |= parse_quast_tsv(quast_tsv_report)
 
-        pprint.pprint(log_data, width=2)
+        insert_dict_to_runs_table(db_connection, log_data)
