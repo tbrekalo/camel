@@ -1,5 +1,4 @@
 import argparse
-import pprint
 import psutil
 import subprocess
 import time
@@ -27,6 +26,9 @@ CREATE TABLE IF NOT EXISTS camel_runs(
     window_length INTEGER,
     n_overlaps INTEGER,
     threads INTEGER,
+    reads_path TEXT,
+    overlaps_path TEXT,
+    reference_path TEXT,
     runtime_s INTEGER,
     peak_memory_MiB INTEGER,
     n_contigs INTEGER,
@@ -151,6 +153,9 @@ if __name__ == '__main__':
         'window_length': extract_unary_as_str('window_length'),
         'n_overlaps': extract_unary_as_str('n_overlaps'),
         'threads': extract_unary_as_str('threads'),
+        'reads_path': getattr(args, 'reads'),
+        'overlaps_path': getattr(args, 'overlaps'),
+        'reference_path': extract_unary_as_str('reference'),
         'runtime_s': runtime,
         'peak_memory_MiB': (peak_memory / (2 ** 20)),
     }
