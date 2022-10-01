@@ -24,6 +24,8 @@ CREATE_CAMEL_RUNS = '''
 CREATE TABLE IF NOT EXISTS camel_runs(
     camel_version TEXT,
     comment TEXT,
+    window_length INTEGER,
+    n_overlaps INTEGER,
     runtime_s INTEGER,
     peak_memory_MiB INTEGER,
     n_contigs INTEGER,
@@ -35,7 +37,8 @@ CREATE TABLE IF NOT EXISTS camel_runs(
     mismatches_per_100kbp REAL,
     indels_per_100kbp REAL,
     largest_alignment INTEGER,
-    total_aligned_length INTEGER
+    total_aligned_length INTEGER,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );'''
 
 
@@ -144,6 +147,8 @@ if __name__ == '__main__':
     log_data = {
         'camel_version': camel_version,
         'comment': comment,
+        'window_length': extract_unary_as_str('window_length'),
+        'n_overlaps': extract_unary_as_str('n_overlaps'),
         'runtime_s': runtime,
         'peak_memory_MiB': (peak_memory / (2 ** 20)),
     }
