@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS camel_runs(
     comment TEXT,
     window_length INTEGER,
     n_overlaps INTEGER,
+    threads INTEGER,
     runtime_s INTEGER,
     peak_memory_MiB INTEGER,
     n_contigs INTEGER,
@@ -149,6 +150,7 @@ if __name__ == '__main__':
         'comment': comment,
         'window_length': extract_unary_as_str('window_length'),
         'n_overlaps': extract_unary_as_str('n_overlaps'),
+        'threads': extract_unary_as_str('threads'),
         'runtime_s': runtime,
         'peak_memory_MiB': (peak_memory / (2 ** 20)),
     }
