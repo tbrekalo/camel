@@ -13,7 +13,7 @@ namespace camel {
 
 CAMEL_EXPORT struct CorrectConfig {
   POAConfig poa_cfg;
-  std::uint32_t correct_window;
+  std::uint32_t window_length;
 };
 
 CAMEL_EXPORT [[nodiscard]] auto ErrorCorrect(
