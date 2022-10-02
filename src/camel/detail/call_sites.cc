@@ -18,7 +18,7 @@ auto IsStableSite(CoverageSignals const& covg_signals,
   auto const ins_rate =
       static_cast<double>(covg_signals.val[CoverageSignals::kInsIdx]) / covg;
 
-  return covg > covg_estimate && match_rate > alfa && ins_rate < beta;
+  return covg > covg_estimate && match_rate > min_match_rate && ins_rate < max_insertion_rate;
 }
 
 auto IsUnstableSite(CoverageSignals const& covg_signals,
