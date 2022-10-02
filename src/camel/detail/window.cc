@@ -90,7 +90,7 @@ static auto KeepHaploidOverlaps(
 
   for (auto i = 0U; i < read_view.InflatedLenght(); ++i) {
     if (IsStableSite(coverage[i], global_coverage_estimate, read_view.Code(i),
-                     0.25, 0.4) &&
+                     0.25, 0.5) &&
         IsSnpSite(coverage[i], global_coverage_estimate, 0.8)) {
       snp_sites.push_back(i);
     }
@@ -188,13 +188,13 @@ auto FindWindows(NucleicView read_view, std::span<CoverageSignals> coverage,
     auto interval = Interval{last, last};
     for (auto first = last; last - first < window_len / 2; --first) {
       if (IsStableSite(coverage[first], global_coverage_estimate,
-                       read_view.Code(first), 0.8, 0.2)) {
+                       read_view.Code(first), 0.7, 0.3)) {
         interval.first = first;
       } else {
         interval.last = first;
       }
 
-      if (IntervalLength(interval) > 8U) {
+      if (IntervalLength(interval) > 14U) {
         break;
       }
     }
