@@ -178,6 +178,39 @@ static auto KeepHaploidOverlaps(
                         std::move(haploid_alignments));
 }
 
+auto FindWindows(NucleicView read_view, std::span<CoverageSignals> coverage,
+                 std::uint32_t const global_coverage_estimate,
+                 std::uint32_t const window_len)
+    -> std::vector<ReferenceWindow> {
+  auto dst = std::vector<ReferenceWindow>();
+  auto const look_behind_anchor =
+      [=](std::uint32_t const last) -> std::uint32_t {
+    auto interval = Interval{last, last};
+    for (auto first = last; last - first < window_len / 2; --first) {
+      if (IsStableSite(coverage[first], global_coverage_estimate,
+                       read_view.Code(first), 0.8, 0.2)) {
+        interval.first = first;
+      } else {
+        interval.last = first;
+      }
+
+      if (IntervalLength(interval) > 8U) {
+        break;
+      }
+    }
+
+    return interval.first + IntervalLength(interval) / 2;
+  };
+
+  for (auto i = 0U; i < read_view.InflatedLenght(); i += window_len) {
+    auto j = std::min(i + window_len, read_view.InflatedLenght());
+
+    dst.push_back(ReferenceWindow{.interval = {i, j}});
+  }
+
+  return dst;
+}
+
 auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
@@ -192,11 +225,8 @@ auto CreateWindowsFromAlignments(
       reads, overlaps, alignments, coverage, global_coverage_estimate);
 
   auto read_view = NucleicView(reads[query_id].get(), false);
-  auto windows = std::vector<ReferenceWindow>();
-  for (auto i = 0U; i < read_view.InflatedLenght(); i += window_len) {
-    auto j = std::min(i + window_len, read_view.InflatedLenght());
-    windows.push_back(ReferenceWindow{.interval = {i, j}});
-  }
+  auto windows =
+      FindWindows(read_view, coverage, global_coverage_estimate, window_len);
 
   BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
                             windows);
@@ -249,7 +279,7 @@ auto WindowConsensus(std::string_view backbone_view,
       subgraph.UpdateAlignment(mapping, &alignment);
     }
 
-      graph.AddAlignment(alignment, bases);
+    graph.AddAlignment(alignment, bases);
   }
 
   return graph.GenerateConsensus();
