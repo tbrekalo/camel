@@ -14,7 +14,7 @@
 namespace camel::detail {
 
 inline auto constexpr kWinPadding = 13U;
-inline auto constexpr kAllowedFuzzPercent = 0.05;
+inline auto constexpr kAllowedFuzzPercent = 0.01;
 inline auto constexpr kSmallWindowPercent = 0.05;
 
 struct AlignedSegment {

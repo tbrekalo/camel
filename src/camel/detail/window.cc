@@ -186,26 +186,32 @@ auto FindWindows(NucleicView read_view, std::span<CoverageSignals> coverage,
   auto const look_behind_anchor =
       [=](std::uint32_t const last) -> std::uint32_t {
     auto interval = Interval{last, last};
-    for (auto first = last; last - first < window_len / 2; --first) {
+    for (auto first = last - 1; first > last && last - first < window_len / 2;
+         --first) {
       if (IsStableSite(coverage[first], global_coverage_estimate,
                        read_view.Code(first), 0.7, 0.3)) {
         interval.first = first;
       } else {
-        interval.last = first;
+        interval = {first, first};
       }
 
       if (IntervalLength(interval) > 14U) {
-        break;
+        return interval.first + IntervalLength(interval) / 2;
       }
     }
-
-    return interval.first + IntervalLength(interval) / 2;
+    return last;
   };
 
-  for (auto i = 0U; i < read_view.InflatedLenght(); i += window_len) {
-    auto j = std::min(i + window_len, read_view.InflatedLenght());
-
+  for (auto i = 0U; i < read_view.InflatedLenght();) {
+    auto j = std::min(look_behind_anchor(i + window_len),
+                      read_view.InflatedLenght());
     dst.push_back(ReferenceWindow{.interval = {i, j}});
+    i = j;
+
+    if (read_view.InflatedLenght() - i < window_len / 5) {
+      dst.back().interval.last = read_view.InflatedLenght();
+      break;
+    }
   }
 
   return dst;
@@ -246,6 +252,10 @@ auto ReleaseAlignmentEngines() -> std::size_t {
 auto WindowConsensus(std::string_view backbone_view,
                      ReferenceWindowView ref_window_view, POAConfig poa_cfg)
     -> std::string {
+  if (ref_window_view.aligned_segments.size() < 3) {
+    return std::string(backbone_view.begin(), backbone_view.end());
+  }
+
   auto& alignment_engine = detail::GetAlignmentEngine(poa_cfg);
   auto graph = spoa::Graph();
 
@@ -282,7 +292,27 @@ auto WindowConsensus(std::string_view backbone_view,
     graph.AddAlignment(alignment, bases);
   }
 
-  return graph.GenerateConsensus();
+  std::vector<std::uint32_t> coverages;
+  auto consensus = graph.GenerateConsensus(&coverages);
+  uint32_t average_coverage = (ref_window_view.aligned_segments.size() - 1) / 2;
+
+  int32_t begin = 0, end = consensus.size() - 1;
+  for (; begin < static_cast<int32_t>(consensus.size()); ++begin) {
+    if (coverages[begin] >= average_coverage) {
+      break;
+    }
+  }
+  for (; end >= 0; --end) {
+    if (coverages[end] >= average_coverage) {
+      break;
+    }
+  }
+
+  if (begin < end) {
+    consensus = consensus.substr(begin, end - begin + 1);
+  }
+
+  return consensus;
 }
 
 }  // namespace camel::detail

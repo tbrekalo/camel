@@ -29,9 +29,11 @@ auto main(int argc, char** argv) -> int {
   options.add_options("correction arguments")
     ("o,n_overlaps", "number of overlaps per read to keep",
       cxxopts::value<std::size_t>()->default_value("64"))
+    ("e,error_threshold", "maximum allowed overlap error threshold",
+      cxxopts::value<double>()->default_value("0.3"))
     ("m,match", "score for matching bases",
       cxxopts::value<std::int8_t>()->default_value("3"))
-    ("n,mismatch", "score for mismatching bases",
+    ("x,mismatch", "score for mismatching bases",
       cxxopts::value<std::int8_t>()->default_value("-5"))
     ("g,gap", "gap penalty (must be nagative)",
       cxxopts::value<std::int8_t>()->default_value("-4"))
@@ -102,8 +104,8 @@ auto main(int argc, char** argv) -> int {
 
     timer.Start();
     auto overlaps = camel::LoadOverlaps(overlaps_path, reads,
-                                        result["n_overlaps"].as<std::size_t>(),
-                                        correct_cfg.window_length * 1.1);
+                                        result["error_threshold"].as<double>(),
+                                        result["n_overlaps"].as<std::size_t>());
     auto const n_ovlps = std::transform_reduce(
         overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
         std::mem_fn(&std::vector<biosoup::Overlap>::size));
