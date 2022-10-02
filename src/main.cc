@@ -102,7 +102,8 @@ auto main(int argc, char** argv) -> int {
 
     timer.Start();
     auto overlaps = camel::LoadOverlaps(overlaps_path, reads,
-                                        result["n_overlaps"].as<std::size_t>());
+                                        result["n_overlaps"].as<std::size_t>(),
+                                        correct_cfg.window_length * 1.1);
     auto const n_ovlps = std::transform_reduce(
         overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
         std::mem_fn(&std::vector<biosoup::Overlap>::size));
