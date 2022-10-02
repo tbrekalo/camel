@@ -233,7 +233,7 @@ auto LoadSequences(std::vector<std::filesystem::path> const& paths)
 auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::size_t const n_overlaps, std::size_t const min_overlap_length)
+    double const error_threshold, std::size_t const n_overlaps)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto dst = std::vector<std::vector<biosoup::Overlap>>(reads.size());
   auto name_to_id =
@@ -287,8 +287,7 @@ auto LoadOverlaps(
     for (auto& ovlp_ptr : ovlps) {
       auto ovlp = transform_overlap(std::move(ovlp_ptr));
       if (ovlp.lhs_id != ovlp.rhs_id &&
-          detail::OverlapLength(ovlp) > min_overlap_length &&
-          detail::OverlapError(ovlp) < 0.2) {
+          detail::OverlapError(ovlp) < error_threshold) {
         push_back_ovlp(ovlp);
       }
     }

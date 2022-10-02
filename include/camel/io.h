@@ -30,7 +30,7 @@ CAMEL_EXPORT [[nodiscard]] auto LoadSequences(std::filesystem::path const& path)
  *
  */
 CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
-      std::vector<std::filesystem::path> const& paths)
+    std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
 /**
@@ -46,8 +46,7 @@ CAMEL_EXPORT auto StoreSequences(
 CAMEL_EXPORT [[nodiscard]] auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::size_t const n_overlaps,
-    std::size_t const min_overlap_len)
+    double const error_threshold, std::size_t const n_overlaps)
     -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel

@@ -50,11 +50,11 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
     };
 
     if (auto ticket = ++report_ticket; ticket == report_ticket) {
-      fmt::print(stderr,
-                 "\r[camel::ErrorCorrect]({:12.3f}) aligned {:3.3f}% | polished "
-                 "{:3.3f}%",
-                 function_timer.Lap(), to_percent(n_aligned),
-                 to_percent(n_polished));
+      fmt::print(
+          stderr,
+          "\r[camel::ErrorCorrect]({:12.3f}) aligned {:3.3f}% | polished "
+          "{:3.3f}%",
+          function_timer.Lap(), to_percent(n_aligned), to_percent(n_polished));
     }
   };
 
@@ -99,9 +99,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
           auto prev = 0U;
           for (auto win_idx = 0U; win_idx < windows.size(); ++win_idx) {
             auto const& interval = windows[win_idx].interval;
-
-            consensus.insert(consensus.end(), 
-                             std::next(backbone.begin(), prev),
+            consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
                              std::next(backbone.begin(), interval.first));
             consensus += window_consensus[win_idx];
             prev = interval.last;
@@ -124,7 +122,8 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
 
   report_state();
   fmt::print(stderr, "\n");
-
+  
+  function_timer.Stop();
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n",
              function_timer.elapsed_time());
   return dst;
