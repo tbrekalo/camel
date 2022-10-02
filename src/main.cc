@@ -93,7 +93,7 @@ auto main(int argc, char** argv) -> int {
   task_arena.execute([&] {
     auto const correct_cfg = camel::CorrectConfig{
         .poa_cfg = camel::POAConfig{},
-        .correct_window = result["window_length"].as<std::uint32_t>()};
+        .window_length = result["window_length"].as<std::uint32_t>()};
 
     timer.Start();
     auto reads = camel::LoadSequences(read_paths);
