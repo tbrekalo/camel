@@ -194,8 +194,8 @@ auto StoreSequences(
   };
 
   {
-    auto const dst_file_path = dst_folder / (fmt::format("reads") +
-                                             (is_fasta ? ".fa" : ".fq"));
+    auto const dst_file_path =
+        dst_folder / (fmt::format("reads") + (is_fasta ? ".fa" : ".fq"));
 
     auto ofstrm =
         std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
@@ -233,7 +233,7 @@ auto LoadSequences(std::vector<std::filesystem::path> const& paths)
 auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    std::size_t const n_overlaps)
+    std::size_t const n_overlaps, std::size_t const min_overlap_length)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto dst = std::vector<std::vector<biosoup::Overlap>>(reads.size());
   auto name_to_id =
@@ -262,7 +262,7 @@ auto LoadOverlaps(
 
     auto ovlps = parser->Parse(std::numeric_limits<std::uint64_t>::max(), true);
 
-    auto const store_ovlp = [&](biosoup::Overlap ovlp) -> void {
+    auto const push_back_ovlp = [&](biosoup::Overlap ovlp) -> void {
       dst[ovlp.lhs_id].push_back(ovlp);
       for (auto i = dst[ovlp.lhs_id].size() - 1; i > 0; --i) {
         if (detail::OverlapLength(dst[ovlp.lhs_id][i - 1]) <
@@ -278,11 +278,18 @@ auto LoadOverlaps(
       }
     };
 
+    auto const store_overlap =
+        [&push_back_ovlp](biosoup::Overlap ovlp) -> void {
+      push_back_ovlp(ovlp);
+      push_back_ovlp(detail::ReverseOverlap(ovlp));
+    };
+
     for (auto& ovlp_ptr : ovlps) {
       auto ovlp = transform_overlap(std::move(ovlp_ptr));
-      if (ovlp.lhs_id != ovlp.rhs_id && detail::OverlapLength(ovlp) > 640U &&
+      if (ovlp.lhs_id != ovlp.rhs_id &&
+          detail::OverlapLength(ovlp) > min_overlap_length &&
           detail::OverlapError(ovlp) < 0.2) {
-        store_ovlp(ovlp);
+        push_back_ovlp(ovlp);
       }
     }
   }
