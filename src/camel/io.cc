@@ -160,43 +160,25 @@ auto StoreSequences(
     return;
   }
 
-  auto const is_fasta = seqs.front()->block_quality.empty();
-
-  auto const store_fasta_impl =
-      +[](std::ostream& ostrm,
-          std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
+  auto const store_fasta =
+      [](std::ostream& ostrm,
+         std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
     ostrm << '>' << seq->name << '\n' << seq->InflateData() << '\n';
-  };
-
-  auto const store_fastq_impl =
-      +[](std::ostream& ostrm,
-          std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
-    ostrm << '@' << seq->name << '\n'
-          << seq->InflateData() << '\n'
-          << "+\n"
-          << seq->InflateQuality() << '\n';
   };
 
   using StoreFnSig =
       void(std::ostream&, std::unique_ptr<biosoup::NucleicAcid> const&);
   using StoreFnPtr = std::add_const_t<std::add_pointer_t<StoreFnSig>>;
 
-  static_assert(std::is_same_v<decltype(store_fasta_impl), StoreFnPtr>);
-  static_assert(std::is_same_v<decltype(store_fastq_impl), StoreFnPtr>);
-
-  auto const store_fn_impl = is_fasta ? store_fasta_impl : store_fastq_impl;
-
   auto const store_fn =
-      [impl = store_fn_impl](
+      [impl = store_fasta](
           std::fstream& ofstrm,
           std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
     impl(ofstrm, seq);
   };
 
   {
-    auto const dst_file_path =
-        dst_folder / (fmt::format("reads") + (is_fasta ? ".fa" : ".fq"));
-
+    auto const dst_file_path = dst_folder / "reads.fa";
     auto ofstrm =
         std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
     for (auto const& seq : seqs) {

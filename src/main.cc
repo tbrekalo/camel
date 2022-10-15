@@ -24,7 +24,7 @@ auto main(int argc, char** argv) -> int {
 
   /* clang-format off */
   options.add_options("serialization arguments")
-    ("o,out", "output destination folder",
+    ("o,out", "output destination folder for reads.fa",
       cxxopts::value<std::string>()->default_value("./camel_out"));
   options.add_options("correction arguments")
     ("n,n_overlaps", "number of overlaps per read to keep",
@@ -58,13 +58,6 @@ auto main(int argc, char** argv) -> int {
   auto const out_path = std::filesystem::path(result["out"].as<std::string>());
 
   auto task_arena = tbb::task_arena(n_threads);
-
-  if (std::filesystem::exists(out_path)) {
-    std::filesystem::remove_all(out_path);
-  }
-
-  std::filesystem::create_directory(out_path);
-
   auto read_paths = std::vector<std::filesystem::path>();
   auto overlaps_path =
       std::filesystem::path(result["overlaps"].as<std::string>());
