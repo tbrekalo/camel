@@ -144,7 +144,7 @@ if(CAMEL_DEVEL_OPTS)
     camel PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>
                  $<$<CONFIG:Debug,RelWithDebInfo>:-fno-omit-frame-pointer>)
   target_link_options(camel PUBLIC
-  $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>)
+                      $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>)
 endif()
 
 # generate export header and attach it to somelib
@@ -159,4 +159,5 @@ if(CAMEL_BUILD_EXE)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc)
   target_link_libraries(camel_exe PRIVATE camel cxxopts::cxxopts fmt::fmt)
+  set_target_properties(camel_exe PROPERTIES RUNTIME_OUTPUT_NAME "camel")
 endif()
