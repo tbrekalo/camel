@@ -1,1 +1,5 @@
-disable=missing-docstring,
+disable=bad-inline-option,
+        locally-disabled,
+        missing-docstring,
+        redundant-keyword-arg,
+        singleton-comparison,
