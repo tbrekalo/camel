@@ -178,7 +178,7 @@ auto StoreSequences(
   };
 
   {
-    auto const dst_file_path = dst_folder / "reads.fa";
+    auto const dst_file_path = dst_folder / "camel_reads.fa";
     auto ofstrm =
         std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
     for (auto const& seq : seqs) {
