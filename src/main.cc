@@ -27,9 +27,9 @@ auto main(int argc, char** argv) -> int {
     ("o,out", "output destination folder for reads.fa",
       cxxopts::value<std::string>()->default_value("./camel_out"));
   options.add_options("correction arguments")
-    ("n,n_overlaps", "number of overlaps per read to keep",
+    ("n,n-overlaps", "number of overlaps per read to keep",
       cxxopts::value<std::size_t>()->default_value("64"))
-    ("e,error_threshold", "maximum allowed overlap error threshold",
+    ("e,error-threshold", "maximum allowed overlap error threshold",
       cxxopts::value<double>()->default_value("0.3"))
     ("m,match", "score for matching bases",
       cxxopts::value<std::int8_t>()->default_value("3"))
@@ -45,11 +45,11 @@ auto main(int argc, char** argv) -> int {
     ("t,threads", "number of threads avalable for execution",
             cxxopts::value<std::uint32_t>());
   options.add_options("input")
-    ("overlaps", 
-      "overlaps path", cxxopts::value<std::string>())
     ("reads", "input fastq reads", 
-            cxxopts::value<std::vector<std::string>>());
-  options.parse_positional({"overlaps", "reads"});
+            cxxopts::value<std::string>())
+    ("overlaps", "overlaps path", 
+            cxxopts::value<std::string>());
+  options.parse_positional({"reads", "overlaps"});
   /* clang-format on */
 
   auto const result = options.parse(argc, argv);
@@ -58,47 +58,26 @@ auto main(int argc, char** argv) -> int {
   auto const out_path = std::filesystem::path(result["out"].as<std::string>());
 
   auto task_arena = tbb::task_arena(n_threads);
-  auto read_paths = std::vector<std::filesystem::path>();
+  auto reads_path = std::filesystem::path(result["reads"].as<std::string>());
   auto overlaps_path =
       std::filesystem::path(result["overlaps"].as<std::string>());
-
-  {
-    auto paths_strs = result["reads"].as<std::vector<std::string>>();
-    for (auto const& it : paths_strs) {
-      auto it_path = std::filesystem::path(std::move(it));
-      if (std::filesystem::is_regular_file(it_path)) {
-        read_paths.emplace_back(std::move(it_path));
-      } else if (std::filesystem::is_directory(it_path)) {
-        for (auto dir_entry : std::filesystem::recursive_directory_iterator(
-                 std::move(it_path))) {
-          if (std::filesystem::is_regular_file(dir_entry)) {
-            read_paths.emplace_back(std::move(dir_entry));
-          }
-        }
-      }
-    }
-  }
-
-  decltype(read_paths)(std::make_move_iterator(read_paths.begin()),
-                       std::make_move_iterator(read_paths.end()))
-      .swap(read_paths);
 
   auto timer = biosoup::Timer();
 
   task_arena.execute([&] {
     auto const correct_cfg = camel::CorrectConfig{
         .poa_cfg = camel::POAConfig{},
-        .window_length = result["window_length"].as<std::uint32_t>()};
+        .window_length = result["window-length"].as<std::uint32_t>()};
 
     timer.Start();
-    auto reads = camel::LoadSequences(read_paths);
+    auto reads = camel::LoadSequences(reads_path);
     fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
                reads.size());
 
     timer.Start();
     auto overlaps = camel::LoadOverlaps(overlaps_path, reads,
-                                        result["error_threshold"].as<double>(),
-                                        result["n_overlaps"].as<std::size_t>());
+                                        result["error-threshold"].as<double>(),
+                                        result["n-overlaps"].as<std::size_t>());
     auto const n_ovlps = std::transform_reduce(
         overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
         std::mem_fn(&std::vector<biosoup::Overlap>::size));
