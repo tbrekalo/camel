@@ -160,30 +160,11 @@ auto StoreSequences(
     return;
   }
 
-  auto const store_fasta =
-      [](std::ostream& ostrm,
-         std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
-    ostrm << '>' << seq->name << '\n' << seq->InflateData() << '\n';
-  };
-
-  using StoreFnSig =
-      void(std::ostream&, std::unique_ptr<biosoup::NucleicAcid> const&);
-  using StoreFnPtr = std::add_const_t<std::add_pointer_t<StoreFnSig>>;
-
-  auto const store_fn =
-      [impl = store_fasta](
-          std::fstream& ofstrm,
-          std::unique_ptr<biosoup::NucleicAcid> const& seq) -> void {
-    impl(ofstrm, seq);
-  };
-
-  {
-    auto const dst_file_path = dst_folder / "camel_reads.fa";
-    auto ofstrm =
-        std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
-    for (auto const& seq : seqs) {
-      store_fn(ofstrm, seq);
-    }
+  auto const dst_file_path = dst_folder / "camel_reads.fa";
+  auto ofstrm =
+      std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
+  for (auto const& seq : seqs) {
+    ofstrm << '>' << seq->name << '\n' << seq->InflateData() << '\n';
   }
 }
 
