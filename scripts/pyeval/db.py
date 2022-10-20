@@ -1,6 +1,8 @@
 import sqlite3
 
-from typing import List, Union
+from typing import List
+
+from config import StrongDict
 
 _QUAST_TSV_TO_COLUMN_NAME = {
     '# contigs': 'n_contigs',
@@ -40,8 +42,6 @@ _TYPE_MAP = {
     str: 'TEXT',
 }
 
-StrongDict = dict[str, Union[int, float, str]]
-
 
 def parse_quast_tsv(file):
     ret = {}
@@ -58,7 +58,7 @@ def parse_quast_tsv(file):
 def _flags_to_columns(exe_flags: StrongDict) -> List[str]:
     dst = []
     for k, v in exe_flags.items():
-        dst.append(f'{k} {_TYPE_MAP[type(v)]}')
+        dst.append(f"{k.replace('-', '_')} {_TYPE_MAP[type(v)]}")
 
     return dst
 
@@ -90,7 +90,7 @@ def insert_dict_to_runs_table(
         data: dict[str, str]):
     cursor = db_connection.cursor()
 
-    columns_str = ', '.join(data.keys())
+    columns_str = ', '.join(map(lambda s: s.replace('-', '_'), data.keys()))
     values_str = ', '.join(map(lambda x: f'"{str(x)}"', data.values()))
     cmd_str = f'INSERT INTO {table_name} ({columns_str}) VALUES ({values_str})'
 
