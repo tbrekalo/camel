@@ -25,7 +25,7 @@ auto main(int argc, char** argv) -> int {
   /* clang-format off */
   options.add_options("serialization arguments")
     ("o,out", "output destination folder for reads.fa",
-      cxxopts::value<std::string>()->default_value("./camel_out"));
+      cxxopts::value<std::string>()->default_value("./"));
   options.add_options("correction arguments")
     ("n,n-overlaps", "number of overlaps per read to keep",
       cxxopts::value<std::size_t>()->default_value("64"))
@@ -43,7 +43,7 @@ auto main(int argc, char** argv) -> int {
       cxxopts::value<std::uint32_t>()->default_value("10"));
   options.add_options("utility arguments")
     ("t,threads", "number of threads avalable for execution",
-            cxxopts::value<std::uint32_t>());
+            cxxopts::value<std::uint32_t>()->default_value("1"));
   options.add_options("input")
     ("reads", "input fastq reads", 
             cxxopts::value<std::string>())
