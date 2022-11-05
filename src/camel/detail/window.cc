@@ -62,7 +62,9 @@ static auto BindReadSegmentsToWindows(
         windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
             .alignment_local_interval = LocalizeInterval(
                 windows[win_idx].interval.first, {lhs_first, lhs_curr}),
-            .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first)});
+            .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first),
+            .quality =
+                rhs_view.InflateQuality(rhs_first, rhs_curr - rhs_first)});
 
         if (++win_idx >= windows.size()) {
           break;
@@ -249,25 +251,32 @@ auto ReleaseAlignmentEngines() -> std::size_t {
   return dst;
 }
 
-auto WindowConsensus(std::string_view backbone_view,
+auto WindowConsensus(std::string_view backbone_data,
+                     std::string_view backbone_quality,
                      ReferenceWindowView ref_window_view, POAConfig poa_cfg)
     -> std::string {
   if (ref_window_view.aligned_segments.size() < 3) {
-    return std::string(backbone_view.begin(), backbone_view.end());
+    return std::string(backbone_data.begin(), backbone_data.end());
   }
 
   auto& alignment_engine = detail::GetAlignmentEngine(poa_cfg);
   auto graph = spoa::Graph();
 
   {
-    auto local_backbone_str = std::string(backbone_view);
-    graph.AddAlignment(spoa::Alignment(), local_backbone_str);
+    auto local_backbone_str = std::string(backbone_data);
+    auto local_backbone_quality_str = std::string(backbone_quality);
+    if (local_backbone_quality_str.empty()) {
+      graph.AddAlignment(spoa::Alignment(), local_backbone_str);
+    } else {
+      graph.AddAlignment(spoa::Alignment(), local_backbone_str,
+                         local_backbone_quality_str);
+    }
   }
 
   auto const [win_ref_intv, aligned_segments] = ref_window_view;
   auto const window_length = IntervalLength(win_ref_intv);
 
-  for (auto const& [alignment_interval, bases] : aligned_segments) {
+  for (auto const& [alignment_interval, bases, quality] : aligned_segments) {
     auto const alignment_len = IntervalLength(alignment_interval);
     if (alignment_len < window_length * detail::kSmallWindowPercent) {
       continue;
@@ -289,7 +298,7 @@ auto WindowConsensus(std::string_view backbone_view,
       subgraph.UpdateAlignment(mapping, &alignment);
     }
 
-    graph.AddAlignment(alignment, bases);
+    graph.AddAlignment(alignment, bases, quality);
   }
 
   std::vector<std::uint32_t> coverages;
