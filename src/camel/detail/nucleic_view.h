@@ -16,9 +16,17 @@ class NucleicView {
   auto InflateData(std::uint32_t const pos, std::uint32_t const len) const
       -> std::string;
 
+  auto Quality(std::size_t const pos) const noexcept -> std::uint8_t;
+
+  auto InflateQuality(std::uint32_t const pos, std::uint32_t const len) const
+      -> std::string;
+
  private:
   using FetchCodeImplPtr = std::uint8_t (*)(biosoup::NucleicAcid const*,
-                                            std::size_t);
+                                            std::size_t) noexcept;
+
+  using FetchQualityImplPtr = std::uint8_t (*)(biosoup::NucleicAcid const*,
+                                               std::size_t) noexcept;
 
   static auto FetchCodeImpl(biosoup::NucleicAcid const* nucleic_acid,
                             std::size_t pos) noexcept -> std::uint8_t;
@@ -27,8 +35,16 @@ class NucleicView {
       biosoup::NucleicAcid const* nucleic_acid, std::size_t pos) noexcept
       -> std::uint8_t;
 
+  static auto FetchQualityImpl(biosoup::NucleicAcid const* nucleic_acid,
+                               std::size_t pos) noexcept -> std::uint8_t;
+
+  static auto FetchReverseComplementQualityImpl(
+      biosoup::NucleicAcid const* nucleic_acid, std::size_t pos) noexcept
+      -> std::uint8_t;
+
   biosoup::NucleicAcid const* nucleic_acid_;
   FetchCodeImplPtr fetch_code_impl_;
+  FetchQualityImplPtr fetch_quality_impl_;
 };
 
 }  // namespace camel::detail
