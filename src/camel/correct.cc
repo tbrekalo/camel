@@ -2,6 +2,7 @@
 
 #include <array>
 #include <functional>
+#include <iterator>
 #include <numeric>
 #include <random>
 #include <variant>
@@ -78,15 +79,20 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
             reads, overlaps[read_id], alignments, correct_cfg.window_length,
             coverage_estimate);
 
-        auto backbone = reads[read_id]->InflateData();
+        auto backbone_data = reads[read_id]->InflateData();
+        auto backbone_quality = reads[read_id]->InflateQuality();
         auto window_consensus = std::vector<std::string>(windows.size());
 
         tbb::parallel_for(
             std::size_t(0), windows.size(), [&](std::size_t window_id) -> void {
               auto interval = windows[window_id].interval;
               window_consensus[window_id] = detail::WindowConsensus(
-                  std::string_view(std::next(backbone.cbegin(), interval.first),
-                                   std::next(backbone.cbegin(), interval.last)),
+                  std::string_view(
+                      std::next(backbone_data.cbegin(), interval.first),
+                      std::next(backbone_data.cbegin(), interval.last)),
+                  std::string_view(
+                      std::next(backbone_quality.cbegin(), interval.first),
+                      std::next(backbone_quality.cbegin(), interval.last)),
                   detail::ReferenceWindowView{
                       .interval = interval,
                       .aligned_segments = windows[window_id].aligned_segments},
@@ -99,14 +105,16 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
           auto prev = 0U;
           for (auto win_idx = 0U; win_idx < windows.size(); ++win_idx) {
             auto const& interval = windows[win_idx].interval;
-            consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
-                             std::next(backbone.begin(), interval.first));
+            consensus.insert(consensus.end(),
+                             std::next(backbone_data.begin(), prev),
+                             std::next(backbone_data.begin(), interval.first));
             consensus += window_consensus[win_idx];
             prev = interval.last;
           }
 
-          consensus.insert(consensus.end(), std::next(backbone.begin(), prev),
-                           backbone.end());
+          consensus.insert(consensus.end(),
+                           std::next(backbone_data.begin(), prev),
+                           backbone_data.end());
 
           dst[target_index] = std::make_unique<biosoup::NucleicAcid>(
               fmt::format("polished_{:09d}", n_polished), consensus);
@@ -122,7 +130,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
 
   report_state();
   fmt::print(stderr, "\n");
-  
+
   function_timer.Stop();
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n",
              function_timer.elapsed_time());

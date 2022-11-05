@@ -20,6 +20,7 @@ inline auto constexpr kSmallWindowPercent = 0.05;
 struct AlignedSegment {
   Interval alignment_local_interval;
   std::string bases;
+  std::string quality;
 };
 
 struct ReferenceWindow {
@@ -42,7 +43,8 @@ struct ReferenceWindowView {
 
 auto ReleaseAlignmentEngines() -> std::size_t;
 
-[[nodiscard]] auto WindowConsensus(std::string_view backbone_view,
+[[nodiscard]] auto WindowConsensus(std::string_view backbone_data,
+                                   std::string_view backbone_quality,
                                    ReferenceWindowView, POAConfig poa_cfg)
     -> std::string;
 
