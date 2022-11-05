@@ -49,51 +49,62 @@ auto main(int argc, char** argv) -> int {
             cxxopts::value<std::string>())
     ("overlaps", "overlaps path", 
             cxxopts::value<std::string>());
+  options.add_options()
+    ("h,help", "print help");
   options.parse_positional({"reads", "overlaps"});
   /* clang-format on */
 
-  auto const result = options.parse(argc, argv);
+  try {
+    auto const result = options.parse(argc, argv);
+    if (result.count("help")) {
+      fmt::print(stderr, "{}", options.help());
+      return EXIT_SUCCESS;
+    }
 
-  auto const n_threads = result["threads"].as<std::uint32_t>();
-  auto const out_path = std::filesystem::path(result["out"].as<std::string>());
+    auto const n_threads = result["threads"].as<std::uint32_t>();
+    auto const out_path =
+        std::filesystem::path(result["out"].as<std::string>());
 
-  auto task_arena = tbb::task_arena(n_threads);
-  auto reads_path = std::filesystem::path(result["reads"].as<std::string>());
-  auto overlaps_path =
-      std::filesystem::path(result["overlaps"].as<std::string>());
+    auto task_arena = tbb::task_arena(n_threads);
+    auto reads_path = std::filesystem::path(result["reads"].as<std::string>());
+    auto overlaps_path =
+        std::filesystem::path(result["overlaps"].as<std::string>());
 
-  auto timer = biosoup::Timer();
+    auto timer = biosoup::Timer();
 
-  task_arena.execute([&] {
-    auto const correct_cfg = camel::CorrectConfig{
-        .poa_cfg = camel::POAConfig{},
-        .window_length = result["window-length"].as<std::uint32_t>()};
+    task_arena.execute([&] {
+      auto const correct_cfg = camel::CorrectConfig{
+          .poa_cfg = camel::POAConfig{},
+          .window_length = result["window-length"].as<std::uint32_t>()};
 
-    timer.Start();
-    auto reads = camel::LoadSequences(reads_path);
-    fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
-               reads.size());
+      timer.Start();
+      auto reads = camel::LoadSequences(reads_path);
+      fmt::print(stderr, "[camel]({:12.3f}) loaded {} reads\n", timer.Stop(),
+                 reads.size());
 
-    timer.Start();
-    auto overlaps = camel::LoadOverlaps(overlaps_path, reads,
-                                        result["error-threshold"].as<double>(),
-                                        result["n-overlaps"].as<std::size_t>());
-    auto const n_ovlps = std::transform_reduce(
-        overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
-        std::mem_fn(&std::vector<biosoup::Overlap>::size));
+      timer.Start();
+      auto overlaps = camel::LoadOverlaps(
+          overlaps_path, reads, result["error-threshold"].as<double>(),
+          result["n-overlaps"].as<std::size_t>());
+      auto const n_ovlps = std::transform_reduce(
+          overlaps.cbegin(), overlaps.cend(), 0ULL, std::plus<std::size_t>(),
+          std::mem_fn(&std::vector<biosoup::Overlap>::size));
 
-    fmt::print(stderr, "[camel]({:12.3f}) loaded {} overlaps\n", timer.Stop(),
-               n_ovlps);
+      fmt::print(stderr, "[camel]({:12.3f}) loaded {} overlaps\n", timer.Stop(),
+                 n_ovlps);
 
-    timer.Start();
-    task_arena.execute([&]() -> void {
-      auto corrected_reads = camel::ErrorCorrect(correct_cfg, std::move(reads),
-                                                 std::move(overlaps));
-      camel::StoreSequences(corrected_reads, out_path);
+      timer.Start();
+      task_arena.execute([&]() -> void {
+        auto corrected_reads = camel::ErrorCorrect(
+            correct_cfg, std::move(reads), std::move(overlaps));
+        camel::StoreSequences(corrected_reads, out_path);
+      });
+      timer.Stop();
+      fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
     });
-    timer.Stop();
-    fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());
-  });
+  } catch (std::exception const& e) {
+    fmt::print(stderr, "{}", e.what());
+  }
 
   return EXIT_SUCCESS;
 }
