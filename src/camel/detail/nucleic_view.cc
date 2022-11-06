@@ -59,7 +59,7 @@ auto NucleicView::FetchQualityImpl(biosoup::NucleicAcid const* nucleic_acid,
   if (nucleic_acid->block_quality.empty()) {
     return 99;  // 60 + 33 for phred offset
   } else {
-    return nucleic_acid->block_quality[pos >> 6];
+    return nucleic_acid->block_quality[pos >> 6] + 33;
   }
 }
 
