@@ -59,12 +59,19 @@ static auto BindReadSegmentsToWindows(
       rhs_curr += (edlib_results[i].alignment[j] != 1);
 
       if (lhs_curr == windows[win_idx].interval.last) {
-        windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
-            .alignment_local_interval = LocalizeInterval(
-                windows[win_idx].interval.first, {lhs_first, lhs_curr}),
-            .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first),
-            .quality =
-                rhs_view.InflateQuality(rhs_first, rhs_curr - rhs_first)});
+        auto quality_sum = 0.0;
+        for (auto pos = rhs_first; pos < rhs_curr; ++pos) {
+          quality_sum += rhs_view.Quality(pos) - 33;
+        }
+
+        if (quality_sum / (rhs_curr - rhs_first) > 10) {
+          windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
+              .alignment_local_interval = LocalizeInterval(
+                  windows[win_idx].interval.first, {lhs_first, lhs_curr}),
+              .bases = rhs_view.InflateData(rhs_first, rhs_curr - rhs_first),
+              .quality =
+                  rhs_view.InflateQuality(rhs_first, rhs_curr - rhs_first)});
+        }
 
         if (++win_idx >= windows.size()) {
           break;
