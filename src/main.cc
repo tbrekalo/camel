@@ -38,7 +38,7 @@ auto main(int argc, char** argv) -> int {
     ("g,gap", "gap penalty (must be nagative)",
       cxxopts::value<std::int8_t>()->default_value("-4"))
     ("w,window-length", "targeted correction window len",
-      cxxopts::value<std::uint32_t>()->default_value("500"))
+      cxxopts::value<std::uint32_t>()->default_value("200"))
     ("q,quality", "minimum read average quality",
       cxxopts::value<std::uint32_t>()->default_value("10"));
   options.add_options("utility arguments")
