@@ -3,6 +3,7 @@ import os
 import psutil
 import shutil
 import subprocess
+import sys
 import time
 
 from collections import namedtuple
@@ -56,6 +57,7 @@ async def _run_camel(
     camel_reads = work_dir.joinpath('camel_reads.fa')
     arg_list = arg_list + ['--out', work_dir.as_posix()]
 
+    print(f'[pyeval::run_camel] args : {arg_list}')
     def spawn_fn():
         return subprocess.Popen([executable, *arg_list])
 
@@ -77,6 +79,7 @@ async def _run_racon(
         args['reads'], args['overlaps'], args['reads']
     ]
 
+    print(f'[pyeval::run_racon] args : {arg_list}')
     with open(racon_reads, 'w') as dst:
         def spawn_fn():
             return subprocess.Popen([executable, *arg_list],
@@ -129,21 +132,27 @@ async def eval_correction(
         shutil.rmtree(eval_dir)
     eval_dir.mkdir()
 
-    async def run_correction(eval_dir, executable, args):
-        if executable == 'camel':
-            return await _run_camel(eval_dir, 'camel', args)
-        else:
-            return await _run_racon(eval_dir, 'racon', args)
+    ret = ()
+    try:
+        async def run_correction(eval_dir, executable, args):
+            if executable == 'camel':
+                return await _run_camel(eval_dir, 'camel', args)
+            else:
+                return await _run_racon(eval_dir, 'racon', args)
 
-    reads, runtime_s, peak_memory_MiB = await run_correction(
-        eval_dir,
-        cfg.executable,
-        cfg.args)
-    raven_asm_path = await _run_raven(eval_dir, reads, cfg.threads)
-    report_path = await _run_quast(
-        eval_dir, raven_asm_path, cfg.reference_path, cfg.threads)
+        reads, runtime_s, peak_memory_MiB = await run_correction(
+            eval_dir,
+            cfg.executable,
+            cfg.args)
+        raven_asm_path = await _run_raven(eval_dir, reads, cfg.threads)
+        report_path = await _run_quast(
+            eval_dir, raven_asm_path, cfg.reference_path, cfg.threads)
 
-    report_data = parse_quast_tsv(report_path)
-    shutil.rmtree(eval_dir)
+        report_data = parse_quast_tsv(report_path)
+        ret = (report_data, runtime_s, peak_memory_MiB)
+    except Exception as err:
+        print(f'[pyeval::eval_correction] : {err}', file=sys.stderr)
+    finally:
+        shutil.rmtree(eval_dir)
 
-    return EvalResult(report_data, runtime_s, peak_memory_MiB)
+    return EvalResult(*ret)
