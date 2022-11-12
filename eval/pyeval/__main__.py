@@ -1,4 +1,5 @@
 import asyncio
+import sys
 
 import db
 
@@ -24,8 +25,7 @@ async def main():
     db.insert_dict_to_runs_table(con, eval_cfg.executable, data)
 
 
-# try:
-#     asyncio.run(main())
-# except Exception as e:
-#     print(e)
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except Exception as err:
+    print(f'[pyeval] {err}', file=sys.stderr)
