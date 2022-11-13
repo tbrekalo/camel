@@ -131,6 +131,7 @@ async def eval_correction(
 
     try:
         context.executable = cfg.executable
+        context.comment = cfg.comment
         context.args = Args(
             **{k.replace('-', '_'): v for k, v in cfg.args.items() if k != 'threads'})
 

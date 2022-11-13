@@ -20,6 +20,7 @@ class DBContext:
         self.__engine = engine
 
         self.executable: str
+        self.comment = None
 
         self.args: Args
         self.benchmark: Benchmark
@@ -34,7 +35,7 @@ class DBContext:
 
     def __exit__(self, err_type, value, traceback):
         if err_type is None:
-            run = Run(executable=self.executable)
+            run = Run(executable=self.executable, comment=self.comment)
             self.__session.add(run)
             self.__session.commit()
 
