@@ -124,7 +124,8 @@ async def eval_correction(
         context: DBContext,
         cfg: EvalConfig,):
     timestamp = datetime.now().strftime('%d-%m-%Y_%H:%M')
-    eval_dir = cfg.work_dir.joinpath(timestamp)
+    eval_dir = cfg.work_dir.joinpath(
+        f'{cfg.executable.replace("/", "_")}_{timestamp}')
     if eval_dir.exists():
         shutil.rmtree(eval_dir)
     eval_dir.mkdir()
@@ -132,6 +133,7 @@ async def eval_correction(
     try:
         context.executable = cfg.executable
         context.comment = cfg.comment
+
         context.args = Args(
             **{k.replace('-', '_'): v for k, v in cfg.args.items() if k != 'threads'})
 
