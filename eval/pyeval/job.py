@@ -1,26 +1,26 @@
 import asyncio
-import os
 import psutil
 import shutil
 import subprocess
 import sys
 import time
 
-from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Tuple
+from typing import Callable, Tuple
+
+from db.orm.models.args import Args
+from db.orm.models.benchmark import Benchmark
+from db.orm.models.quast import Quast
+from db.orm.models.run import Run
+from db.context import DBContext
 
 from config import EvalConfig, StrongDict
-from db import parse_quast_tsv
-
-EvalResult = namedtuple(
-    'EvalResult', ['quast_data', 'runtime_s', 'peak_memory_MiB'])
+from util import parse_quast_tsv
 
 
 async def _run_correction(
-        spawn: Callable[[], subprocess.Popen]
-) -> Tuple[float, float]:
+        spawn: Callable[[], subprocess.Popen]) -> Tuple[float, float]:
     start, end = time.perf_counter(), time.perf_counter()
     peak_memory_usage = 0
 
@@ -47,8 +47,7 @@ async def _run_correction(
 async def _run_camel(
         work_dir: Path,
         executable: str,
-        args: StrongDict,
-) -> Tuple[Path, float, float]:
+        args: StrongDict,) -> Tuple[Path, float, float]:
 
     arg_list = []
     for k, v in args.items():
@@ -57,7 +56,6 @@ async def _run_camel(
     camel_reads = work_dir.joinpath('camel_reads.fa')
     arg_list = arg_list + ['--out', work_dir.as_posix()]
 
-    print(f'[pyeval::run_camel] args : {arg_list}')
     def spawn_fn():
         return subprocess.Popen([executable, *arg_list])
 
@@ -68,8 +66,7 @@ async def _run_camel(
 async def _run_racon(
         work_dir: Path,
         executable: str,
-        args: StrongDict,
-) -> Tuple[Path, float, float]:
+        args: StrongDict,) -> Tuple[Path, float, float]:
     racon_reads = work_dir.joinpath('racon_reads.fa')
     arg_list = [
         '-f',
@@ -124,16 +121,19 @@ async def _run_quast(
 
 
 async def eval_correction(
-    cfg: EvalConfig
-) -> EvalResult:
+        context: DBContext,
+        cfg: EvalConfig,):
     timestamp = datetime.now().strftime('%d-%m-%Y_%H:%M')
     eval_dir = cfg.work_dir.joinpath(timestamp)
     if eval_dir.exists():
         shutil.rmtree(eval_dir)
     eval_dir.mkdir()
 
-    ret = ()
     try:
+        context.executable = cfg.executable
+        context.args = Args(
+            **{k.replace('-', '_'): v for k, v in cfg.args.items() if k != 'threads'})
+
         async def run_correction(eval_dir, executable, args):
             if executable == 'camel':
                 return await _run_camel(eval_dir, 'camel', args)
@@ -144,15 +144,19 @@ async def eval_correction(
             eval_dir,
             cfg.executable,
             cfg.args)
+
+        context.benchmark = Benchmark(
+            threads=cfg.args['threads'],
+            runtime_s=runtime_s,
+            peak_memory_mib=peak_memory_MiB)
+
         raven_asm_path = await _run_raven(eval_dir, reads, cfg.threads)
         report_path = await _run_quast(
             eval_dir, raven_asm_path, cfg.reference_path, cfg.threads)
 
-        report_data = parse_quast_tsv(report_path)
-        ret = (report_data, runtime_s, peak_memory_MiB)
+        context.quast = Quast(**parse_quast_tsv(report_path))
     except Exception as err:
-        print(f'[pyeval::eval_correction] : {err}', file=sys.stderr)
+        print(err)
+        raise err
     finally:
         shutil.rmtree(eval_dir)
-
-    return EvalResult(*ret)

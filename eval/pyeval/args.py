@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from pathlib import Path
 
 from config import EvalConfig
