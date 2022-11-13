@@ -3,6 +3,7 @@ import sqlalchemy.orm as sa_orm
 
 from .base import Base
 
+
 class Benchmark(Base,):
     __tablename__ = 'benchmark'
 
