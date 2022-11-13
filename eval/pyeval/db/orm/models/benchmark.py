@@ -10,7 +10,6 @@ class Benchmark(Base,):
     threads = sa.Column(sa.Integer, nullable=False)
     runtime_s = sa.Column(sa.Integer, nullable=False)
     peak_memory_mib = sa.Column(sa.Integer, nullable=False)
-    timestemp = sa.Column(sa.DateTime, default=sa.func.now())
 
     run_id = sa.Column(sa.Integer, sa.ForeignKey('run.id'))
     run = sa_orm.relationship('Run', back_populates='benchmark')
