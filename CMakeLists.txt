@@ -48,7 +48,6 @@ list(APPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 # options
 option(CAMEL_BUILD_SHARED_LIBS
        "Build camel and it's dependencies as shared lib" OFF)
-option(CAMEL_BUILD_TESTS "Build tests" OFF)
 option(CAMEL_PACK "Include camel packaging info" OFF)
 option(CAMEL_BUILD_EXE "Build camel executable" OFF)
 option(CAMEL_DEVEL_OPTS "Enable options used for development" OFF)
