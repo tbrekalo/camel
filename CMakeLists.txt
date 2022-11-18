@@ -131,7 +131,8 @@ add_library(${PROJECT_NAME}::camel ALIAS camel)
 set_target_properties(camel PROPERTIES VERSION ${camel_VERSION}
                                        SOVERSION ${camel_VERSION_MAJOR})
 target_include_directories(
-  camel PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+  camel PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+               "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>")
 target_compile_features(camel PUBLIC cxx_std_20)
 target_link_libraries(
   camel
@@ -156,8 +157,12 @@ target_include_directories(
 
 if(CAMEL_BUILD_EXE)
   find_package(cxxopts)
+  configure_file(${PROJECT_SOURCE_DIR}/src/version.h.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/include/camel/version.h)
 
   add_executable(camel_exe ${PROJECT_SOURCE_DIR}/src/main.cc)
-  target_link_libraries(camel_exe PRIVATE camel cxxopts::cxxopts fmt::fmt)
   set_target_properties(camel_exe PROPERTIES RUNTIME_OUTPUT_NAME "camel")
+  target_link_libraries(camel_exe PRIVATE camel cxxopts::cxxopts fmt::fmt)
+  target_include_directories(camel_exe
+                             PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include/camel)
 endif()
