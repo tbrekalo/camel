@@ -12,6 +12,7 @@
 #include "biosoup/timer.hpp"
 #include "camel/correct.h"
 #include "camel/io.h"
+#include "camel/version.h"
 #include "cxxopts.hpp"
 #include "fmt/core.h"
 #include "tbb/task_arena.h"
@@ -49,8 +50,9 @@ auto main(int argc, char** argv) -> int {
             cxxopts::value<std::string>())
     ("overlaps", "overlaps path", 
             cxxopts::value<std::string>());
-  options.add_options()
-    ("h,help", "print help");
+  options.add_options("info")
+    ("h,help", "print help")
+    ("v,version", "print version and exit");
   options.parse_positional({"reads", "overlaps"});
   /* clang-format on */
 
@@ -60,6 +62,16 @@ auto main(int argc, char** argv) -> int {
       fmt::print(stderr, "{}", options.help());
       return EXIT_SUCCESS;
     }
+
+    /* clang-format off */
+    if (result.count("version")) {
+      fmt::print(stderr, "{}.{}.{}", 
+          camel_VERSION_MAJOR, 
+          camel_VERSION_MINOR,
+          camel_VERSION_PATCH);
+      return EXIT_SUCCESS;
+    }
+    /* clang-format on */
 
     auto const n_threads = result["threads"].as<std::uint32_t>();
     auto const out_path =

@@ -1,0 +1,3 @@
+#define camel_VERSION_MAJOR @camel_VERSION_MAJOR@
+#define camel_VERSION_MINOR @camel_VERSION_MINOR@
+#define camel_VERSION_PATCH @camel_VERSION_PATCH@
