@@ -2,7 +2,7 @@ import asyncio
 import sys
 
 from args import parse_args
-from job import eval_correction
+from run import eval_correction
 from db.context import create_engine, DBContext
 
 
