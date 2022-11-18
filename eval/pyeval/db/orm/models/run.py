@@ -9,6 +9,7 @@ class Run(Base, ):
 
     id = sa.Column(sa.Integer, primary_key=True)
     executable = sa.Column(sa.String, nullable=False)
+    version = sa.Column(sa.String, nullable=False)
     timestemp = sa.Column(sa.DateTime, default=sa.func.now())
     comment = sa.Column(sa.String)
 
