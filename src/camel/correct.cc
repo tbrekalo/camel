@@ -81,12 +81,13 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
 
         auto backbone_data = reads[read_id]->InflateData();
         auto backbone_quality = reads[read_id]->InflateQuality();
-        auto window_consensus = std::vector<std::string>(windows.size());
+        auto window_consensuses =
+            std::vector<detail::ConsensusResult>(windows.size());
 
         tbb::parallel_for(
             std::size_t(0), windows.size(), [&](std::size_t window_id) -> void {
               auto interval = windows[window_id].interval;
-              window_consensus[window_id] = detail::WindowConsensus(
+              window_consensuses[window_id] = detail::WindowConsensus(
                   std::string_view(
                       std::next(backbone_data.cbegin(), interval.first),
                       std::next(backbone_data.cbegin(), interval.last)),
@@ -102,22 +103,28 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         {
           auto consensus = std::string();
           consensus.reserve(reads[read_id]->inflated_len * 1.2);
-          auto prev = 0U;
           for (auto win_idx = 0U; win_idx < windows.size(); ++win_idx) {
-            auto const& interval = windows[win_idx].interval;
-            consensus.insert(consensus.end(),
-                             std::next(backbone_data.begin(), prev),
-                             std::next(backbone_data.begin(), interval.first));
-            consensus += window_consensus[win_idx];
-            prev = interval.last;
+            consensus += window_consensuses[win_idx].bases;
           }
 
-          consensus.insert(consensus.end(),
-                           std::next(backbone_data.begin(), prev),
-                           backbone_data.end());
+          auto const polished_ratio =
+              std::transform_reduce(
+                  window_consensuses.cbegin(), window_consensuses.cend(), 0.0,
+                  std::plus<double>(),
+                  [](detail::ConsensusResult const& cr) {
+                    return static_cast<double>(cr.is_corrected);
+                  }) /
+              static_cast<double>(window_consensuses.size());
 
-          dst[target_index] = std::make_unique<biosoup::NucleicAcid>(
-              fmt::format("polished_{:09d}", n_polished), consensus);
+          /* clang-format off */
+          std::string consensus_name =
+              fmt::format("{} LN:i:{} RC:i:{} XC:f:{:5.2f}", 
+                  reads[read_id]->name,
+                          consensus.size(), windows.size(), polished_ratio);
+          /* clang-format on */
+
+          dst[target_index] =
+              std::make_unique<biosoup::NucleicAcid>(consensus_name, consensus);
         }
 
         ++n_polished;
