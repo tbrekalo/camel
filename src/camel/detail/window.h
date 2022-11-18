@@ -33,6 +33,11 @@ struct ReferenceWindowView {
   std::span<AlignedSegment> aligned_segments;
 };
 
+struct ConsensusResult {
+  std::string bases;
+  bool is_corrected;
+};
+
 [[nodiscard]] auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
@@ -46,7 +51,7 @@ auto ReleaseAlignmentEngines() -> std::size_t;
 [[nodiscard]] auto WindowConsensus(std::string_view backbone_data,
                                    std::string_view backbone_quality,
                                    ReferenceWindowView, POAConfig poa_cfg)
-    -> std::string;
+    -> ConsensusResult;
 
 }  // namespace camel::detail
 

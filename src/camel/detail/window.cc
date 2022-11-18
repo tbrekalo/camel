@@ -261,9 +261,10 @@ auto ReleaseAlignmentEngines() -> std::size_t {
 auto WindowConsensus(std::string_view backbone_data,
                      std::string_view backbone_quality,
                      ReferenceWindowView ref_window_view, POAConfig poa_cfg)
-    -> std::string {
+    -> ConsensusResult {
   if (ref_window_view.aligned_segments.size() < 3) {
-    return std::string(backbone_data.begin(), backbone_data.end());
+    return {.bases = std::string(backbone_data.begin(), backbone_data.end()),
+            .is_corrected = false};
   }
 
   auto& alignment_engine = detail::GetAlignmentEngine(poa_cfg);
@@ -328,7 +329,7 @@ auto WindowConsensus(std::string_view backbone_data,
     consensus = consensus.substr(begin, end - begin + 1);
   }
 
-  return consensus;
+  return {.bases = std::move(consensus), .is_corrected = true};
 }
 
 }  // namespace camel::detail
