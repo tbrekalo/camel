@@ -2,7 +2,6 @@ import asyncio
 import psutil
 import shutil
 import subprocess
-import sys
 import time
 
 from datetime import datetime
@@ -12,7 +11,6 @@ from typing import Callable, Tuple
 from db.orm.models.args import Args
 from db.orm.models.benchmark import Benchmark
 from db.orm.models.quast import Quast
-from db.orm.models.run import Run
 from db.context import DBContext
 
 from config import EvalConfig, StrongDict
@@ -120,6 +118,16 @@ async def _run_quast(
     return quast_dir.joinpath('report.tsv')
 
 
+def _get_version(
+        executable: str) -> str:
+    completion_handle = subprocess.run(
+        [executable, '--version'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+
+    return completion_handle.stderr.decode()
+
+
 async def eval_correction(
         context: DBContext,
         cfg: EvalConfig,):
@@ -132,6 +140,7 @@ async def eval_correction(
 
     try:
         context.executable = cfg.executable
+        context.version = _get_version(cfg.executable)
         context.comment = cfg.comment
 
         context.args = Args(
