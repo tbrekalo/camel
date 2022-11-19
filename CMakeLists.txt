@@ -64,14 +64,14 @@ if(CAMEL_BUILD_SHARED_LIBS)
   set(BUILD_SHARED_LIBS ON)
 endif()
 
-conan_cmake_configure(
-  REQUIRES
-  cxxopts/3.0.0
-  fmt/8.1.1
-  tbb/2020.3
-  tsl-robin-map/1.0.1
-  GENERATORS
-  cmake_find_package)
+set(CAMEL_CONAN_DEPS cxxopts/3.0.0 fmt/8.1.1 tbb/2020.3 tsl-robin-map/1.0.1)
+if(CAMEL_DEVEL_OPTS)
+  list(APPEND CAMEL_CONAN_DEPS nlohmann_json/3.11.2)
+endif()
+
+message(STATUS "[camel] conan deps: ${CAMEL_CONAN_DEPS}")
+conan_cmake_configure(REQUIRES ${CAMEL_CONAN_DEPS} GENERATORS
+                      cmake_find_package)
 
 conan_cmake_autodetect(settings)
 conan_cmake_install(
@@ -145,6 +145,8 @@ if(CAMEL_DEVEL_OPTS)
                  $<$<CONFIG:Debug,RelWithDebInfo>:-fno-omit-frame-pointer>)
   target_link_options(camel PUBLIC
                       $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>)
+
+  include(${PROJECT_SOURCE_DIR}/eval/CamelEval.cmake)
 endif()
 
 # generate export header and attach it to somelib
