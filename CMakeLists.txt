@@ -115,7 +115,6 @@ set(camel_SOURCES
     ${PROJECT_SOURCE_DIR}/src/camel/detail/alignment.cc
     ${PROJECT_SOURCE_DIR}/src/camel/detail/call_sites.cc
     ${PROJECT_SOURCE_DIR}/src/camel/detail/consensus.cc
-    ${PROJECT_SOURCE_DIR}/src/camel/detail/correct.cc
     ${PROJECT_SOURCE_DIR}/src/camel/detail/coverage.cc
     ${PROJECT_SOURCE_DIR}/src/camel/detail/interval.cc
     ${PROJECT_SOURCE_DIR}/src/camel/detail/nucleic_view.cc

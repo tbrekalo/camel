@@ -225,33 +225,11 @@ auto LoadOverlaps(
 
     auto ovlps = parser->Parse(std::numeric_limits<std::uint64_t>::max(), true);
 
-    auto const push_back_ovlp = [&](biosoup::Overlap ovlp) -> void {
-      dst[ovlp.lhs_id].push_back(ovlp);
-      for (auto i = dst[ovlp.lhs_id].size() - 1; i > 0; --i) {
-        if (detail::OverlapLength(dst[ovlp.lhs_id][i - 1]) <
-            detail::OverlapLength(dst[ovlp.lhs_id][i])) {
-          std::swap(dst[ovlp.lhs_id][i - 1], dst[ovlp.lhs_id][i]);
-        } else {
-          break;
-        }
-      }
-
-      if (dst[ovlp.lhs_id].size() > n_overlaps) {
-        dst[ovlp.lhs_id].pop_back();
-      }
-    };
-
-    auto const store_overlap =
-        [&push_back_ovlp](biosoup::Overlap ovlp) -> void {
-      push_back_ovlp(ovlp);
-      push_back_ovlp(detail::ReverseOverlap(ovlp));
-    };
-
     for (auto& ovlp_ptr : ovlps) {
       auto ovlp = transform_overlap(std::move(ovlp_ptr));
       if (ovlp.lhs_id != ovlp.rhs_id &&
           detail::OverlapError(ovlp) < error_threshold) {
-        push_back_ovlp(ovlp);
+        dst[ovlp.rhs_id].push_back(ovlp);
       }
     }
   }

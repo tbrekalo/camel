@@ -2,10 +2,10 @@
 #define CAMEL_DETAIL_ALIGNMENT_H_
 
 #include <memory>
+#include <span>
 
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
-#include <span>
 #include "edlib.h"
 
 namespace camel::detail {
