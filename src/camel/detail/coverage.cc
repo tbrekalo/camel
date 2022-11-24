@@ -17,8 +17,8 @@ static auto constexpr kShrinkShift = 3U;
   events.reserve(2 * overlaps[read_id].size());
 
   for (auto const& ovlp : overlaps[read_id]) {
-    events.push_back(((ovlp.lhs_begin >> kShrinkShift) + 1U) << 1U);
-    events.push_back((((ovlp.lhs_end >> kShrinkShift) - 1U) << 1U) | 1U);
+    events.push_back(((ovlp.rhs_begin >> kShrinkShift) + 1U) << 1U);
+    events.push_back((((ovlp.rhs_end >> kShrinkShift) - 1U) << 1U) | 1U);
   }
 
   auto covg = 0U;
@@ -59,40 +59,38 @@ auto CalculateCoverage(
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results)
     -> std::vector<CoverageSignals> {
-  auto const query_id = overlaps.front().lhs_id;
-  auto dst = std::vector<CoverageSignals>(reads[query_id]->inflated_len + 1U);
+  auto const target_id = overlaps.front().rhs_id;
+  auto dst = std::vector<CoverageSignals>(reads[target_id]->inflated_len + 1U);
 
-  for (auto i = 0U; i < reads[query_id]->inflated_len; ++i) {
-    ++dst[i].val[reads[query_id]->Code(i)];
+  for (auto i = 0U; i < reads[target_id]->inflated_len; ++i) {
+    ++dst[i].val[reads[target_id]->Code(i)];
   }
 
   for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
     auto const& edlib_res = edlib_results[ovlp_idx];
-    auto const rhs_view =
-        NucleicView(reads[overlaps[ovlp_idx].rhs_id].get(),
+    auto const query_view =
+        NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
                     /* is_reverse_complement = */ !overlaps[ovlp_idx].strand);
 
-    auto lhs_pos = overlaps[ovlp_idx].lhs_begin;
-    auto rhs_pos = overlaps[ovlp_idx].rhs_begin;
+    auto query_pos = overlaps[ovlp_idx].lhs_begin;
+    auto target_pos = overlaps[ovlp_idx].rhs_begin;
 
     auto i = 0;
-    for (; i < edlib_res.alignmentLength && edlib_res.alignment[i] == 2; ++i)
-      ;  // skip initial insertion
     for (; i < edlib_res.alignmentLength; ++i) {
       switch (edlib_res.alignment[i]) {
         case 0:  // match
         case 3:  // mismatch
-          ++dst[lhs_pos].val[rhs_view.Code(rhs_pos)];
-          ++lhs_pos;
-          ++rhs_pos;
+          ++dst[target_pos].val[query_view.Code(query_pos)];
+          ++query_pos;
+          ++target_pos;
           break;
-        case 1:  // deletion on the query
-          ++dst[lhs_pos].val[CoverageSignals::kDelIdx];
-          ++lhs_pos;
+        case 1:  // insertion on the target
+          ++dst[target_pos].val[CoverageSignals::kInsIdx];
+          ++query_pos;
           break;
-        case 2:  // insertion on the query
-          ++dst[lhs_pos - 1U].val[CoverageSignals::kInsIdx];
-          ++rhs_pos;
+        case 2:  // deletion on the target
+          ++dst[target_pos].val[CoverageSignals::kDelIdx];
+          ++target_pos;
           break;
         default:
           break;
