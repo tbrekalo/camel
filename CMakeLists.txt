@@ -144,8 +144,6 @@ if(CAMEL_DEVEL_OPTS)
                  $<$<CONFIG:Debug,RelWithDebInfo>:-fno-omit-frame-pointer>)
   target_link_options(camel PUBLIC
                       $<$<CONFIG:Debug,RelWithDebInfo>:-fsanitize=address>)
-
-  include(${PROJECT_SOURCE_DIR}/eval/CamelEval.cmake)
 endif()
 
 # generate export header and attach it to somelib
