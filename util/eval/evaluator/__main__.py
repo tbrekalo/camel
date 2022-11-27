@@ -2,8 +2,8 @@ import asyncio
 import sys
 
 from args import parse_args
-from run import eval_correction
-from db.context import create_engine, DBContext
+from tasks import eval_correction
+from ..db.context import create_engine, DBContext
 
 
 async def main():
