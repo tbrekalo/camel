@@ -10,6 +10,8 @@ from .orm.models.benchmark import Benchmark
 from .orm.models.quast import Quast
 from .orm.models.run import Run
 
+def create_uri(sqlite_path: Path) -> str:
+    return f'sqlite:///{sqlite_path}'
 
 def create_engine(sqlite_path: Path) -> sa.engine.Engine:
     return sa.create_engine(f'sqlite:///{sqlite_path}', echo=False)
