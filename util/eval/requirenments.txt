@@ -1,4 +1,0 @@
-greenlet==2.0.1
-polars==0.15.1
-psutil==5.9.4
-SQLAlchemy==1.4.44
