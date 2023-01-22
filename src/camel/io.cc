@@ -33,7 +33,7 @@ static constexpr auto kFastaSuffxies =
     std::array<char const*, 4>{".fasta", "fasta.gz", ".fa", ".fa.gz"};
 
 static constexpr auto kFastqSuffixes =
-    std::array<char const*, 4>{".fastq", ".fastq.gz", ".fa", ".fa.gz"};
+    std::array<char const*, 4>{".fastq", ".fastq.gz", ".fq", ".fq.gz"};
 
 static auto IsSuffixFor(std::string_view const suffix,
                         std::string_view const query) -> bool {
