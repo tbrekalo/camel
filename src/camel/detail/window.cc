@@ -28,10 +28,11 @@ static auto BindReadSegmentsToWindows(
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results,
     std::span<ReferenceWindow> windows) -> void {
-  for (auto i = 0U; i < overlaps.size(); ++i) {
+  for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
     auto win_idx = std::distance(
         windows.begin(),
-        std::upper_bound(windows.begin(), windows.end(), overlaps[i].lhs_begin,
+        std::upper_bound(windows.begin(), windows.end(),
+                         overlaps[ovlp_idx].rhs_begin,
                          [](std::uint32_t const ovlp_start,
                             ReferenceWindow const& ref_window) -> bool {
                            return ovlp_start < ref_window.interval.last;
@@ -41,42 +42,45 @@ static auto BindReadSegmentsToWindows(
       continue;
     }
 
-    auto query_first = overlaps[i].lhs_begin;
-    auto target_first = overlaps[i].rhs_begin;
+    auto query_first = overlaps[ovlp_idx].lhs_begin;
+    auto target_first = overlaps[ovlp_idx].rhs_begin;
 
     auto query_curr = query_first;
     auto target_curr = target_first;
 
-    auto const query_view =
-        NucleicView(reads[overlaps[i].lhs_id].get(), !overlaps[i].strand);
-    for (auto j = 0U; j < edlib_results[i].alignmentLength; ++j) {
+    auto const query_view = NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
+                                        !overlaps[ovlp_idx].strand);
+    for (auto align_idx = 0U;
+         align_idx < edlib_results[ovlp_idx].alignmentLength; ++align_idx) {
       if (target_curr == windows[win_idx].interval.first) {
         query_first = query_curr;
         target_first = target_curr;
       }
 
-      query_curr += (edlib_results[i].alignment[j] != 2);
-      target_curr += (edlib_results[i].alignment[j] != 1);
+      query_curr += (edlib_results[ovlp_idx].alignment[align_idx] != 2);
+      target_curr += (edlib_results[ovlp_idx].alignment[align_idx] != 1);
 
-      if (target_curr == windows[win_idx].interval.last) {
-        auto quality_sum = 0.0;
-        for (auto pos = query_first; pos < query_curr; ++pos) {
-          quality_sum += query_view.Quality(pos) - 33;
-        }
+      if (target_curr != windows[win_idx].interval.last) {
+        continue;
+      }
 
-        if (quality_sum / (query_curr - query_first) > 10) {
-          windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
-              .alignment_local_interval = LocalizeInterval(
-                  windows[win_idx].interval.first, {target_first, target_curr}),
-              .bases =
-                  query_view.InflateData(query_first, query_curr - query_first),
-              .quality = query_view.InflateQuality(query_first,
-                                                   query_curr - query_first)});
-        }
+      auto quality_sum = 0.0;
+      for (auto pos = query_first; pos < query_curr; ++pos) {
+        quality_sum += query_view.Quality(pos) - 33;
+      }
 
-        if (++win_idx >= windows.size()) {
-          break;
-        }
+      if (quality_sum / (query_curr - query_first) > 10) {
+        windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
+            .alignment_local_interval = LocalizeInterval(
+                windows[win_idx].interval.first, {target_first, target_curr}),
+            .bases =
+                query_view.InflateData(query_first, query_curr - query_first),
+            .quality = query_view.InflateQuality(query_first,
+                                                 query_curr - query_first)});
+      }
+
+      if (++win_idx >= windows.size()) {
+        break;
       }
     }
   }
@@ -194,7 +198,7 @@ auto FindWindows(NucleicView read_view, std::span<CoverageSignals> coverage,
   auto dst = std::vector<ReferenceWindow>();
 
   for (auto i = 0U; i < read_view.InflatedLenght();) {
-    auto j = std::min(window_len, read_view.InflatedLenght());
+    auto j = std::min(i + window_len, read_view.InflatedLenght());
     dst.push_back(ReferenceWindow{.interval = {i, j}});
     i = j;
 
