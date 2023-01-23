@@ -8,10 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Tuple
 
-from ..db.orm.models.args import Args
-from ..db.orm.models.benchmark import Benchmark
-from ..db.orm.models.quast import Quast
-from ..db.context import DBContext
+from db.orm.models.args import Args
+from db.orm.models.benchmark import Benchmark
+from db.orm.models.quast import Quast
+from db.context import DBContext
 
 from config import EvalConfig, StrongDict
 from util import parse_quast_tsv
