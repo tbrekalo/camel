@@ -201,11 +201,6 @@ auto FindWindows(NucleicView read_view, std::span<CoverageSignals> coverage,
     auto j = std::min(i + window_len, read_view.InflatedLenght());
     dst.push_back(ReferenceWindow{.interval = {i, j}});
     i = j;
-
-    if (read_view.InflatedLenght() - i < window_len / 5) {
-      dst.back().interval.last = read_view.InflatedLenght();
-      break;
-    }
   }
 
   return dst;
