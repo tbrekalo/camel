@@ -1,6 +1,7 @@
 #include "window.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "call_sites.h"
 #include "spoa/alignment_engine.hpp"
@@ -8,6 +9,8 @@
 #include "tbb/enumerable_thread_specific.h"
 
 namespace camel::detail {
+
+static constexpr auto kInvalidIndex = std::numeric_limits<uint32_t>::max();
 
 static auto AlignmentEngines =
     tbb::enumerable_thread_specific<std::unique_ptr<spoa::AlignmentEngine>>();
@@ -42,25 +45,39 @@ static auto BindReadSegmentsToWindows(
       continue;
     }
 
-    auto query_first = overlaps[ovlp_idx].lhs_begin;
-    auto target_first = overlaps[ovlp_idx].rhs_begin;
-
-    auto query_curr = query_first;
-    auto target_curr = target_first;
-
     auto const query_view = NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
                                         !overlaps[ovlp_idx].strand);
+
+    auto query_first = kInvalidIndex;
+    auto target_first = kInvalidIndex;
+
+    auto query_last = query_first;
+    auto target_last = target_first;
+    auto query_curr = overlaps[ovlp_idx].strand
+                          ? overlaps[ovlp_idx].lhs_begin
+                          : reads[overlaps[ovlp_idx].lhs_id]->inflated_len -
+                                overlaps[ovlp_idx].lhs_end;
+    auto target_curr = overlaps[ovlp_idx].rhs_begin;
+
     for (auto align_idx = 0U;
          align_idx < edlib_results[ovlp_idx].alignmentLength; ++align_idx) {
-      if (target_curr == windows[win_idx].interval.first) {
-        query_first = query_curr;
-        target_first = target_curr;
+      if (target_curr >= windows[win_idx].interval.first &&
+          (edlib_results[ovlp_idx].alignment[align_idx] == 0 ||
+           edlib_results[ovlp_idx].alignment[align_idx] == 3)) {
+        if (query_first == kInvalidIndex) {
+          query_first = query_curr;
+          target_first = target_curr;
+        }
+
+        query_last = query_curr + 1;
+        target_last = target_curr + 1;
       }
 
       query_curr += (edlib_results[ovlp_idx].alignment[align_idx] != 2);
       target_curr += (edlib_results[ovlp_idx].alignment[align_idx] != 1);
 
-      if (target_curr != windows[win_idx].interval.last) {
+      if (target_curr != windows[win_idx].interval.last &&
+          align_idx + 1 != edlib_results[ovlp_idx].alignmentLength) {
         continue;
       }
 
@@ -69,20 +86,29 @@ static auto BindReadSegmentsToWindows(
         quality_sum += query_view.Quality(pos) - 33;
       }
 
-      if (quality_sum / (query_curr - query_first) > 10) {
+      if (quality_sum / (query_last - query_first) > 10) {
         windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
             .alignment_local_interval = LocalizeInterval(
-                windows[win_idx].interval.first, {target_first, target_curr}),
+                windows[win_idx].interval.first, {target_first, target_last}),
             .bases =
-                query_view.InflateData(query_first, query_curr - query_first),
+                query_view.InflateData(query_first, query_last - query_first),
             .quality = query_view.InflateQuality(query_first,
-                                                 query_curr - query_first)});
+                                                 query_last - query_first)});
       }
 
+      query_first = target_first = kInvalidIndex;
       if (++win_idx >= windows.size()) {
         break;
       }
     }
+  }
+
+  for (auto& win : windows) {
+    std::sort(win.aligned_segments.begin(), win.aligned_segments.end(),
+              [](AlignedSegment const& lhs, AlignedSegment const& rhs) -> bool {
+                return lhs.alignment_local_interval.first <
+                       rhs.alignment_local_interval.first;
+              });
   }
 }
 
@@ -116,8 +142,6 @@ static auto KeepHaploidOverlaps(
       auto const& edlib_res = edlib_results[ovlp_idx];
       auto target_pos = overlaps[ovlp_idx].rhs_begin;
 
-      // for (; i < edlib_res.alignmentLength && edlib_res.alignment[i] == 1;
-      // ++i) ;  // skip initial insertion
       auto snp_site_idx = 0U;
       while (snp_site_idx < snp_sites.size() &&
              snp_sites[snp_site_idx] < target_pos) {
@@ -264,20 +288,21 @@ auto WindowConsensus(std::string_view backbone_data,
   auto const [win_ref_intv, aligned_segments] = ref_window_view;
   auto const window_length = IntervalLength(win_ref_intv);
 
+  auto const legal_start = static_cast<decltype(window_length)>(
+      window_length * detail::kAllowedFuzzPercent);
+  auto const legal_end = window_length - legal_start;
   for (auto const& [alignment_interval, bases, quality] : aligned_segments) {
     auto const alignment_len = IntervalLength(alignment_interval);
     if (alignment_len < window_length * detail::kSmallWindowPercent) {
       continue;
     }
 
-    auto const legal_start = window_length * detail::kAllowedFuzzPercent;
-    auto const legal_end = window_length - legal_start;
-
     auto alignment = spoa::Alignment();
-    if (alignment_interval.first <= legal_start &&
-        legal_end <= alignment_interval.last) {
+    if (alignment_interval.first < legal_start &&
+        alignment_interval.last - 1 > legal_end) {
       alignment = alignment_engine.Align(bases, graph);
-    } else if (IntervalLength(alignment_interval) > kWinPadding) {
+
+    } else {
       auto mapping = std::vector<spoa::Graph::Node const*>();
       auto subgraph = graph.Subgraph(alignment_interval.first,
                                      alignment_interval.last - 1, &mapping);
