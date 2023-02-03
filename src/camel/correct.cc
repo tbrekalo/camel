@@ -84,6 +84,16 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         auto window_consensuses =
             std::vector<detail::ConsensusResult>(windows.size());
 
+        auto const fetch_quality = [&](std::uint32_t first,
+                                       std::uint32_t last) {
+          if (!backbone_quality.empty()) {
+            std::string_view(std::next(backbone_quality.cbegin(), first),
+                             std::next(backbone_quality.cbegin(), last));
+          }
+
+          return std::string_view{};
+        };
+
         tbb::parallel_for(
             std::size_t(0), windows.size(), [&](std::size_t window_id) -> void {
               auto interval = windows[window_id].interval;
@@ -91,9 +101,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
                   std::string_view(
                       std::next(backbone_data.cbegin(), interval.first),
                       std::next(backbone_data.cbegin(), interval.last)),
-                  std::string_view(
-                      std::next(backbone_quality.cbegin(), interval.first),
-                      std::next(backbone_quality.cbegin(), interval.last)),
+                  fetch_quality(interval.first, interval.last),
                   detail::ReferenceWindowView{
                       .interval = interval,
                       .aligned_segments = windows[window_id].aligned_segments},

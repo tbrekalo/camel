@@ -72,7 +72,10 @@ auto CalculateCoverage(
         NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
                     /* is_reverse_complement = */ !overlaps[ovlp_idx].strand);
 
-    auto query_pos = overlaps[ovlp_idx].lhs_begin;
+    auto query_pos = overlaps[ovlp_idx].strand
+                         ? overlaps[ovlp_idx].lhs_begin
+                         : reads[overlaps[ovlp_idx].lhs_id]->inflated_len -
+                               overlaps[ovlp_idx].lhs_end;
     auto target_pos = overlaps[ovlp_idx].rhs_begin;
 
     auto i = 0;

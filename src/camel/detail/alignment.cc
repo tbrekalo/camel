@@ -7,16 +7,20 @@ namespace camel::detail {
 auto ExtractSubstrings(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> std::tuple<std::string, std::string> {
-  auto const lhs_view = NucleicView(reads[ovlp.lhs_id].get(), false);
-  auto const rhs_view = NucleicView(reads[ovlp.rhs_id].get(),
-                                    /* is_reverse_complement = */ !ovlp.strand);
+  auto const query_view =
+      NucleicView(reads[ovlp.lhs_id].get(),
+                  /* is_reverse_complement = */ !ovlp.strand);
+  auto const target_view = NucleicView(reads[ovlp.rhs_id].get(), false);
 
-  auto lhs_str =
-      lhs_view.InflateData(ovlp.lhs_begin, ovlp.lhs_end - ovlp.lhs_begin);
-  auto rhs_str =
-      rhs_view.InflateData(ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
+  auto query_str = query_view.InflateData(
+      ovlp.strand ? ovlp.lhs_begin
+                  : reads[ovlp.lhs_id]->inflated_len - ovlp.lhs_end,
+      ovlp.lhs_end - ovlp.lhs_begin);
 
-  return {std::move(lhs_str), std::move(rhs_str)};
+  auto target_str =
+      target_view.InflateData(ovlp.rhs_begin, ovlp.rhs_end - ovlp.rhs_begin);
+
+  return {std::move(query_str), std::move(target_str)};
 }
 
 auto AlignStrings(std::string_view query_str_view,
