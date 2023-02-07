@@ -40,8 +40,8 @@ auto main(int argc, char** argv) -> int {
       cxxopts::value<std::int8_t>()->default_value("-4"))
     ("w,window-length", "targeted correction window len",
       cxxopts::value<std::uint32_t>()->default_value("200"))
-    ("q,quality", "minimum read average quality",
-      cxxopts::value<std::uint32_t>()->default_value("10"));
+    ("q,quality_threshold", "minimum read average quality",
+      cxxopts::value<double>()->default_value("10.0"));
   options.add_options("utility arguments")
     ("t,threads", "number of threads avalable for execution",
             cxxopts::value<std::uint32_t>()->default_value("1"));
@@ -87,7 +87,9 @@ auto main(int argc, char** argv) -> int {
     task_arena.execute([&] {
       auto const correct_cfg = camel::CorrectConfig{
           .poa_cfg = camel::POAConfig{},
-          .window_length = result["window-length"].as<std::uint32_t>()};
+          .window_cfg = {
+              .quality_threshold = result["quality_threshold"].as<double>(),
+              .window_length = result["window-length"].as<std::uint32_t>()}};
 
       timer.Start();
       auto reads = camel::LoadSequences(reads_path);

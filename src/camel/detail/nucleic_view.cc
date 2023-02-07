@@ -56,10 +56,10 @@ auto NucleicView::FetchReverseComplementCodeImpl(
 
 auto NucleicView::FetchQualityImpl(biosoup::NucleicAcid const* nucleic_acid,
                                    std::size_t pos) noexcept -> std::uint8_t {
-  if (nucleic_acid->block_quality.empty()) {
+  if (nucleic_acid->quality.empty()) {
     return 99;  // 60 + 33 for phred offset
   } else {
-    return nucleic_acid->block_quality[pos >> 6] + 33;
+    return nucleic_acid->quality[pos] + 33;
   }
 }
 

@@ -228,7 +228,7 @@ auto LoadOverlaps(
     for (auto& ovlp_ptr : ovlps) {
       auto ovlp = transform_overlap(std::move(ovlp_ptr));
       if (ovlp.lhs_id != ovlp.rhs_id &&
-          detail::OverlapError(ovlp) < error_threshold) {
+          detail::OverlapError(ovlp) <= error_threshold) {
         dst[ovlp.rhs_id].push_back(ovlp);
       }
     }
