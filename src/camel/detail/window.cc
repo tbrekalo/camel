@@ -30,7 +30,7 @@ static auto BindReadSegmentsToWindows(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
     std::span<EdlibAlignResult const> edlib_results,
-    std::span<ReferenceWindow> windows) -> void {
+    std::span<ReferenceWindow> windows, double quality_threshold) -> void {
   for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
     auto win_idx = std::distance(
         windows.begin(),
@@ -82,11 +82,11 @@ static auto BindReadSegmentsToWindows(
       }
 
       auto quality_sum = 0.0;
-      for (auto pos = query_first; pos < query_curr; ++pos) {
+      for (auto pos = query_first; pos < query_last; ++pos) {
         quality_sum += query_view.Quality(pos) - 33;
       }
 
-      if (quality_sum / (query_last - query_first) > 10) {
+      if (quality_sum / (query_last - query_first) > quality_threshold) {
         windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
             .alignment_local_interval = LocalizeInterval(
                 windows[win_idx].interval.first, {target_first, target_last}),
@@ -233,8 +233,7 @@ auto FindWindows(NucleicView read_view, std::span<CoverageSignals> coverage,
 auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
-    std::span<EdlibAlignResult const> alignments,
-    std::uint32_t const window_len,
+    std::span<EdlibAlignResult const> alignments, WindowConfig window_cfg,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow> {
   auto const target_id = overlaps.front().rhs_id;
@@ -244,11 +243,11 @@ auto CreateWindowsFromAlignments(
       reads, overlaps, alignments, coverage, global_coverage_estimate);
 
   auto read_view = NucleicView(reads[target_id].get(), false);
-  auto windows =
-      FindWindows(read_view, coverage, global_coverage_estimate, window_len);
+  auto windows = FindWindows(read_view, coverage, global_coverage_estimate,
+                             window_cfg.window_length);
 
   BindReadSegmentsToWindows(reads, haploid_overlaps, haploid_alignments,
-                            windows);
+                            windows, window_cfg.quality_threshold);
 
   std::for_each(haploid_alignments.begin(), haploid_alignments.end(),
                 edlibFreeAlignResult);
@@ -316,7 +315,7 @@ auto WindowConsensus(std::string_view backbone_data,
 
   std::vector<std::uint32_t> coverages;
   auto consensus = graph.GenerateConsensus(&coverages);
-  uint32_t average_coverage = (ref_window_view.aligned_segments.size() - 1) / 2;
+  uint32_t average_coverage = ref_window_view.aligned_segments.size() / 2;
 
   int32_t begin = 0, end = consensus.size() - 1;
   for (; begin < static_cast<int32_t>(consensus.size()); ++begin) {

@@ -76,7 +76,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         report_state();
 
         auto windows = detail::CreateWindowsFromAlignments(
-            reads, overlaps[read_id], alignments, correct_cfg.window_length,
+            reads, overlaps[read_id], alignments, correct_cfg.window_cfg,
             coverage_estimate);
 
         auto backbone_data = reads[read_id]->InflateData();

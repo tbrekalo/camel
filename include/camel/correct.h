@@ -6,15 +6,21 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
-#include "camel/poa_config.h"
 #include "camel/export.h"
+#include "camel/poa_config.h"
 
 namespace camel {
 
-CAMEL_EXPORT struct CorrectConfig {
-  POAConfig poa_cfg;
+CAMEL_EXPORT struct WindowConfig {
+  double quality_threshold;
   std::uint32_t window_length;
 };
+
+CAMEL_EXPORT struct CorrectConfig {
+  POAConfig poa_cfg;
+  WindowConfig window_cfg;
+};
+
 
 CAMEL_EXPORT [[nodiscard]] auto ErrorCorrect(
     CorrectConfig const correct_cfg,
