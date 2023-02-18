@@ -30,7 +30,7 @@ struct ReferenceWindow {
 
 struct ReferenceWindowView {
   Interval interval;
-  std::span<AlignedSegment> aligned_segments;
+  std::span<AlignedSegment const> aligned_segments;
 };
 
 struct ConsensusResult {
@@ -41,7 +41,7 @@ struct ConsensusResult {
 [[nodiscard]] auto CreateWindowsFromAlignments(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
-    std::span<EdlibAlignResult const> edlib_results, WindowConfig window_cfg,
+    WindowConfig window_cfg,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow>;
 

@@ -6,21 +6,17 @@
 
 #include "biosoup/nucleic_acid.hpp"
 #include "biosoup/overlap.hpp"
-#include "edlib.h"
 
 namespace camel::detail {
 
-[[nodiscard]] auto ExtractSubstrings(
-    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    biosoup::Overlap ovlp) -> std::tuple<std::string, std::string>;
+auto IsMisOrMatch(char chr) -> bool;
+auto IsInsertion(char chr) -> bool;
+auto IsDeletion(char chr) -> bool;
+auto IsClipOrPad(char chr) -> bool;
 
-[[nodiscard]] auto AlignStrings(std::string_view lhs_str_view,
-                                std::string_view rhs_str_view)
-    -> EdlibAlignResult;
-
-[[nodiscard]] auto OverlapToALignment(
+[[nodiscard]] auto AlignedOverlap(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    biosoup::Overlap ovlp) -> EdlibAlignResult;
+    biosoup::Overlap ovlp) -> biosoup::Overlap;
 
 }  // namespace camel::detail
 

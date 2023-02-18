@@ -108,7 +108,13 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/rvaser/spoa
   GIT_TAG 4.0.7)
 
-FetchContent_MakeAvailable(bioparser biosoup edlib spoa)
+
+FetchContent_Declare(
+  wfa2
+  GIT_REPOSITORY https://github.com/smarco/WFA2-lib
+  GIT_TAG v2.3.3)
+
+FetchContent_MakeAvailable(bioparser biosoup edlib spoa wfa2)
 
 # create main target
 set(camel_SOURCES
@@ -135,7 +141,7 @@ target_compile_features(camel PUBLIC cxx_std_20)
 target_link_libraries(
   camel
   PUBLIC biosoup TBB::tbb
-  PRIVATE bioparser edlib fmt::fmt spoa tsl::robin_map)
+  PRIVATE bioparser edlib fmt::fmt spoa tsl::robin_map wfa2cpp_static)
 
 # enable development options
 if(CAMEL_DEVEL_OPTS)

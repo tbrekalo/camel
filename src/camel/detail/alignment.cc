@@ -1,10 +1,45 @@
 #include "alignment.h"
 
+#include "bindings/cpp/WFAligner.hpp"
+#include "edlib.h"
 #include "nucleic_view.h"
+#include "tbb/enumerable_thread_specific.h"
 
 namespace camel::detail {
 
-auto ExtractSubstrings(
+auto IsMisOrMatch(char chr) -> bool {
+  return chr == 'M' || chr == '=' || chr == 'X';
+}
+
+auto IsInsertion(char chr) -> bool { return chr == 'I'; }
+
+auto IsDeletion(char chr) -> bool { return chr == 'D' || chr == 'N'; }
+
+auto IsClipOrPad(char chr) -> bool {
+  return chr == 'S' || chr == 'H' || chr == 'P';
+}
+
+static auto Aligners =
+    tbb::enumerable_thread_specific<std::unique_ptr<wfa::WFAlignerGapAffine>>();
+
+static auto GetAligner(std::int8_t mismatch, std::int8_t grap_opening,
+                       std::int8_t gap_extension)
+    -> std::unique_ptr<wfa::WFAlignerGapAffine>& {
+  auto& aligner = Aligners.local();
+  if (!aligner) {
+    aligner = std::make_unique<wfa::WFAlignerGapAffine>(
+        mismatch, grap_opening, gap_extension, wfa::WFAligner::Alignment,
+        wfa::WFAligner::MemoryUltralow);
+
+    aligner->setHeuristicWFadaptive(10, 50, 1);
+    aligner->setHeuristicBandedAdaptive(-50, +50, 1);
+    aligner->setHeuristicXDrop(100, 100);
+    aligner->setHeuristicZDrop(100, 100);
+  }
+  return aligner;
+};
+
+[[nodiscard]] auto ExtractSubstrings(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> std::tuple<std::string, std::string> {
   auto const query_view =
@@ -23,20 +58,15 @@ auto ExtractSubstrings(
   return {std::move(query_str), std::move(target_str)};
 }
 
-auto AlignStrings(std::string_view query_str_view,
-                  std::string_view target_str_view) -> EdlibAlignResult {
-  /* clang-format off */
-  return edlibAlign(
-      query_str_view.data(), query_str_view.length(), 
-      target_str_view.data(), target_str_view.length(),
-      edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
-  /* clang-format on */
-}
-
-auto OverlapToALignment(
+auto AlignedOverlap(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    biosoup::Overlap ovlp) -> EdlibAlignResult {
-  return std::apply(AlignStrings, ExtractSubstrings(reads, ovlp));
+    biosoup::Overlap ovlp) -> biosoup::Overlap {
+  auto [query_str, target_str] = ExtractSubstrings(reads, ovlp);
+  auto& aligner = GetAligner(5, 4, 2);
+  aligner->alignEnd2End(query_str, target_str);
+  ovlp.alignment = aligner->getAlignmentCigar();
+
+  return ovlp;
 }
 
 }  // namespace camel::detail

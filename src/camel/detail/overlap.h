@@ -22,69 +22,14 @@ enum class OverlapType : std::uint8_t {
 };
 
 /**
- * @brief concept for overlap filter callable:
- *         Filter(biosoup::Overlap const&) -> bool;
- */
-template <class T>
-using IsOverlapFilter = std::is_invocable_r<bool, T, biosoup::Overlap const&>;
-
-/**
- * @brief helper for @ref IsOverlapFilter
- */
-template <class T>
-inline bool constexpr IsOverlapFilerV = IsOverlapFilter<T>::value;
-
-/**
- * @brief concept for overlap compare callable:
- *         OvlpCmp(biosoup::Overlap const&, biosoup::Overlap const&) -> bool
- */
-template <class T>
-using IsOverlapCmpCallable =
-    std::is_invocable_r<bool, T, biosoup::Overlap const&,
-                        biosoup::Overlap const&>;
-
-/**
- * @brief helper for @ref IsOverlapCmpCallable
- */
-template <class T>
-inline bool constexpr IsOverlapCmpCallableV = IsOverlapCmpCallable<T>::value;
-
-/**
- * @brief concept for overlap sink callable:
- *          Sink(biosoup::Overlap const&) -> void;
- */
-template <class T>
-using IsOverlapSink = std::is_invocable_r<void, T, biosoup::Overlap const&>;
-
-/**
- * @brief helper for @ref IsOverlapSink
- */
-template <class T>
-inline bool constexpr IsOverlapSinkV = IsOverlapSink<T>::value;
-
-/**
  * @brief Determine overlap type provided origin sequence length information
  */
-auto DetermineOverlapType(biosoup::Overlap const ovlp,
+auto DetermineOverlapType(biosoup::Overlap const& ovlp,
                           std::uint32_t const lhs_seq_size,
                           std::uint32_t const rhs_seq_size) -> OverlapType;
 
-/**
- * @brief swap rhs and lhs
- */
-auto ReverseOverlap(biosoup::Overlap const& ovlp) -> biosoup::Overlap;
-
-/**
- * @brief calculate overlap length
- */
 auto OverlapLength(biosoup::Overlap const& ovlp) -> std::uint32_t;
-
-/**
- * @brief calculate overlap score
- */
-
 auto OverlapError(biosoup::Overlap const& ovlp) -> double;
-
 auto OverlapScore(biosoup::Overlap const& ovlp) -> double;
 
 }  // namespace camel::detail

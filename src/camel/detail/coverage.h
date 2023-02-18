@@ -27,9 +27,7 @@ struct CoverageSignals {
 
 [[nodiscard]] auto CalculateCoverage(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    std::span<biosoup::Overlap const> overlaps,
-    std::span<EdlibAlignResult const> edlib_results)
-    -> std::vector<CoverageSignals>;
+    std::span<biosoup::Overlap const> overlaps) -> std::vector<CoverageSignals>;
 }  // namespace camel::detail
 
 #endif /* CAMEL_DETAIL_COVERAGE_H_ */
