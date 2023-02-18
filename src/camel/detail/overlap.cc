@@ -2,7 +2,7 @@
 
 namespace camel::detail {
 
-auto DetermineOverlapType(biosoup::Overlap const ovlp,
+auto DetermineOverlapType(biosoup::Overlap const& ovlp,
                           std::uint32_t const lhs_seq_size,
                           std::uint32_t const rhs_seq_size) -> OverlapType {
   auto const lhs_begin = ovlp.lhs_begin;
@@ -48,17 +48,6 @@ auto DetermineOverlapType(biosoup::Overlap const ovlp,
   }
 
   return OverlapType::kUnclassified;
-}
-
-auto ReverseOverlap(biosoup::Overlap const& ovlp) -> biosoup::Overlap {
-  /* clang-format off */
-  return biosoup::Overlap(
-    ovlp.rhs_id, ovlp.rhs_begin, ovlp.rhs_end, 
-    ovlp.lhs_id, ovlp.lhs_begin, ovlp.lhs_end,
-
-    ovlp.score, ovlp.strand
-  );
-  /* clang-format on */
 }
 
 auto OverlapLength(biosoup::Overlap const& ovlp) -> std::uint32_t {

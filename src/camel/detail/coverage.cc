@@ -56,50 +56,49 @@ auto EstimateCoverage(
 
 auto CalculateCoverage(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    std::span<biosoup::Overlap const> overlaps,
-    std::span<EdlibAlignResult const> edlib_results)
+    std::span<biosoup::Overlap const> overlaps)
     -> std::vector<CoverageSignals> {
   auto const target_id = overlaps.front().rhs_id;
   auto dst = std::vector<CoverageSignals>(reads[target_id]->inflated_len + 1U);
 
-  for (auto i = 0U; i < reads[target_id]->inflated_len; ++i) {
-    ++dst[i].val[reads[target_id]->Code(i)];
-  }
+  // for (auto i = 0U; i < reads[target_id]->inflated_len; ++i) {
+  //   ++dst[i].val[reads[target_id]->Code(i)];
+  // }
 
-  for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
-    auto const& edlib_res = edlib_results[ovlp_idx];
-    auto const query_view =
-        NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
-                    /* is_reverse_complement = */ !overlaps[ovlp_idx].strand);
+  // for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
+  //   auto const& edlib_res = edlib_results[ovlp_idx];
+  //   auto const query_view =
+  //       NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
+  //                   /* is_reverse_complement = */ !overlaps[ovlp_idx].strand);
 
-    auto query_pos = overlaps[ovlp_idx].strand
-                         ? overlaps[ovlp_idx].lhs_begin
-                         : reads[overlaps[ovlp_idx].lhs_id]->inflated_len -
-                               overlaps[ovlp_idx].lhs_end;
-    auto target_pos = overlaps[ovlp_idx].rhs_begin;
+  //   auto query_pos = overlaps[ovlp_idx].strand
+  //                        ? overlaps[ovlp_idx].lhs_begin
+  //                        : reads[overlaps[ovlp_idx].lhs_id]->inflated_len -
+  //                              overlaps[ovlp_idx].lhs_end;
+  //   auto target_pos = overlaps[ovlp_idx].rhs_begin;
 
-    auto i = 0;
-    for (; i < edlib_res.alignmentLength; ++i) {
-      switch (edlib_res.alignment[i]) {
-        case 0:  // match
-        case 3:  // mismatch
-          ++dst[target_pos].val[query_view.Code(query_pos)];
-          ++query_pos;
-          ++target_pos;
-          break;
-        case 1:  // insertion on the target
-          ++dst[target_pos].val[CoverageSignals::kInsIdx];
-          ++query_pos;
-          break;
-        case 2:  // deletion on the target
-          ++dst[target_pos].val[CoverageSignals::kDelIdx];
-          ++target_pos;
-          break;
-        default:
-          break;
-      }
-    }
-  }
+  //   auto i = 0;
+  //   for (; i < edlib_res.alignmentLength; ++i) {
+  //     switch (edlib_res.alignment[i]) {
+  //       case 0:  // match
+  //       case 3:  // mismatch
+  //         ++dst[target_pos].val[query_view.Code(query_pos)];
+  //         ++query_pos;
+  //         ++target_pos;
+  //         break;
+  //       case 1:  // insertion on the target
+  //         ++dst[target_pos].val[CoverageSignals::kInsIdx];
+  //         ++query_pos;
+  //         break;
+  //       case 2:  // deletion on the target
+  //         ++dst[target_pos].val[CoverageSignals::kDelIdx];
+  //         ++target_pos;
+  //         break;
+  //       default:
+  //         break;
+  //     }
+  //   }
+  // }
 
   return dst;
 }
