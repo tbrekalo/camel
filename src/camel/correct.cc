@@ -15,11 +15,93 @@
 
 namespace camel {
 
+namespace detail {
+
+static auto GetTargetIds(
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<std::vector<biosoup::Overlap> const> overlaps)
+    -> std::vector<std::size_t> {
+  auto dst = std::vector<std::size_t>();
+  for (auto i = 0U; i < overlaps.size(); ++i) {
+    if (!overlaps[i].empty()) {
+      dst.push_back(i);
+    }
+  }
+
+  return dst;
+}
+
+static auto AlignOverlaps(
+    std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
+    std::span<biosoup::Overlap> overlaps) -> void {
+  tbb::parallel_for(std::size_t(0), overlaps.size(),
+                    [reads, overlaps](std::size_t overlap_id) -> void {
+                      overlaps[overlap_id] =
+                          AlignedOverlap(reads, overlaps[overlap_id]);
+                    });
+}
+
+static auto CreateConsensus(POAConfig poa_cfg, NucleicView read,
+                            std::span<ReferenceWindow const> windows) {
+  auto backbone_data = read.InflateData();
+  auto backbone_quality = read.InflateQuality();
+
+  auto const fetch_quality = [&](std::uint32_t first, std::uint32_t last) {
+    if (!backbone_quality.empty()) {
+      std::string_view(std::next(backbone_quality.cbegin(), first),
+                       std::next(backbone_quality.cbegin(), last));
+    }
+
+    return std::string_view{};
+  };
+
+  auto consensuses = std::vector<ConsensusResult>(windows.size());
+
+  tbb::parallel_for(
+      std::size_t(0), windows.size(),
+      [poa_cfg, windows, &backbone_data, &fetch_quality,
+       &consensuses](std::size_t window_id) -> void {
+        auto interval = windows[window_id].interval;
+        consensuses[window_id] = WindowConsensus(
+            std::string_view(std::next(backbone_data.cbegin(), interval.first),
+                             std::next(backbone_data.cbegin(), interval.last)),
+            fetch_quality(interval.first, interval.last),
+            ReferenceWindowView{
+                .interval = interval,
+                .aligned_segments = windows[window_id].aligned_segments},
+            poa_cfg);
+      });
+
+  auto consensus = std::string();
+  consensus.reserve(read.InflatedLenght() * 1.2);
+  for (auto win_idx = 0U; win_idx < windows.size(); ++win_idx) {
+    consensus += consensuses[win_idx].bases;
+  }
+
+  auto const polished_ratio =
+      std::transform_reduce(consensuses.cbegin(), consensuses.cend(), 0.0,
+                            std::plus<double>(),
+                            [](detail::ConsensusResult const& cr) {
+                              return static_cast<double>(cr.is_corrected);
+                            }) /
+      static_cast<double>(consensuses.size());
+
+  /* clang-format off */
+          std::string consensus_name =
+              fmt::format("{} LN:i:{} RC:i:{} XC:f:{:5.2f}",
+                  read.Name(),
+                          consensus.size(), windows.size(), polished_ratio);
+  /* clang-format on */
+
+  return std::make_unique<biosoup::NucleicAcid>(consensus_name, consensus);
+}
+
+}  // namespace detail
+
 auto ErrorCorrect(CorrectConfig const correct_cfg,
                   std::vector<std::unique_ptr<biosoup::NucleicAcid>> reads,
                   std::vector<std::vector<biosoup::Overlap>> overlaps)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
-  auto corrected_targets = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
   auto function_timer = biosoup::Timer();
 
@@ -29,20 +111,14 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
              function_timer.Stop(), coverage_estimate);
 
   function_timer.Start();
-  auto target_ids = std::vector<std::size_t>();
-  for (auto i = 0U; i < overlaps.size(); ++i) {
-    if (!overlaps[i].empty()) {
-      target_ids.push_back(i);
-    }
-  }
 
+  auto const target_ids = detail::GetTargetIds(reads, overlaps);
   auto const n_targets = target_ids.size();
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f}) n target reads {}\n",
              function_timer.Stop(), n_targets);
 
   auto n_aligned = std::atomic_size_t(0);
   auto n_polished = std::atomic_size_t(0);
-
   auto report_ticket = std::atomic_size_t(0);
   auto const report_state = [&function_timer, n_targets, &n_aligned,
                              &n_polished, &report_ticket]() -> void {
@@ -63,77 +139,19 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
 
   function_timer.Start();
   tbb::parallel_for(
-      std::size_t(0), target_ids.size(), [&](std::size_t target_index) -> void {
-        auto const read_id = target_ids[target_index];
-        auto alignments =
-            std::vector<EdlibAlignResult>(overlaps[read_id].size());
-        tbb::parallel_for(std::size_t(0), overlaps[read_id].size(),
-                          [&, read_id](std::size_t overlap_id) -> void {
-                            alignments[overlap_id] = detail::OverlapToALignment(
-                                reads, overlaps[read_id][overlap_id]);
-                          });
+      std::size_t(0), target_ids.size(), [&](std::size_t target_idx) -> void {
+        auto const read_id = target_ids[target_idx];
+        detail::AlignOverlaps(reads, overlaps[read_id]);
         ++n_aligned;
         report_state();
 
         auto windows = detail::CreateWindowsFromAlignments(
-            reads, overlaps[read_id], alignments, correct_cfg.window_cfg,
+            reads, overlaps[read_id], correct_cfg.window_cfg,
             coverage_estimate);
 
-        auto backbone_data = reads[read_id]->InflateData();
-        auto backbone_quality = reads[read_id]->InflateQuality();
-        auto window_consensuses =
-            std::vector<detail::ConsensusResult>(windows.size());
-
-        auto const fetch_quality = [&](std::uint32_t first,
-                                       std::uint32_t last) {
-          if (!backbone_quality.empty()) {
-            std::string_view(std::next(backbone_quality.cbegin(), first),
-                             std::next(backbone_quality.cbegin(), last));
-          }
-
-          return std::string_view{};
-        };
-
-        tbb::parallel_for(
-            std::size_t(0), windows.size(), [&](std::size_t window_id) -> void {
-              auto interval = windows[window_id].interval;
-              window_consensuses[window_id] = detail::WindowConsensus(
-                  std::string_view(
-                      std::next(backbone_data.cbegin(), interval.first),
-                      std::next(backbone_data.cbegin(), interval.last)),
-                  fetch_quality(interval.first, interval.last),
-                  detail::ReferenceWindowView{
-                      .interval = interval,
-                      .aligned_segments = windows[window_id].aligned_segments},
-                  correct_cfg.poa_cfg);
-            });
-
-        {
-          auto consensus = std::string();
-          consensus.reserve(reads[read_id]->inflated_len * 1.2);
-          for (auto win_idx = 0U; win_idx < windows.size(); ++win_idx) {
-            consensus += window_consensuses[win_idx].bases;
-          }
-
-          auto const polished_ratio =
-              std::transform_reduce(
-                  window_consensuses.cbegin(), window_consensuses.cend(), 0.0,
-                  std::plus<double>(),
-                  [](detail::ConsensusResult const& cr) {
-                    return static_cast<double>(cr.is_corrected);
-                  }) /
-              static_cast<double>(window_consensuses.size());
-
-          /* clang-format off */
-          std::string consensus_name =
-              fmt::format("{} LN:i:{} RC:i:{} XC:f:{:5.2f}", 
-                  reads[read_id]->name,
-                          consensus.size(), windows.size(), polished_ratio);
-          /* clang-format on */
-
-          dst[target_index] =
-              std::make_unique<biosoup::NucleicAcid>(consensus_name, consensus);
-        }
+        dst[target_idx] = detail::CreateConsensus(
+            correct_cfg.poa_cfg,
+            detail::NucleicView(reads[read_id].get(), false), windows);
 
         ++n_polished;
         report_state();
