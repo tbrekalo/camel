@@ -11,12 +11,20 @@ NucleicView::NucleicView(biosoup::NucleicAcid const* nucleic_acid,
                               ? &FetchReverseComplementQualityImpl
                               : &FetchQualityImpl) {}
 
+auto NucleicView::Name() const -> std::string_view {
+  return nucleic_acid_->name;
+}
+
 auto NucleicView::InflatedLenght() const noexcept -> std::uint32_t {
   return nucleic_acid_->inflated_len;
 }
 
 auto NucleicView::Code(std::size_t const pos) const noexcept -> std::uint8_t {
   return fetch_code_impl_(nucleic_acid_, pos);
+}
+
+auto NucleicView::InflateData() const -> std::string {
+  return InflateData(0, nucleic_acid_->inflated_len);
 }
 
 auto NucleicView::InflateData(std::uint32_t const pos,
@@ -31,6 +39,10 @@ auto NucleicView::InflateData(std::uint32_t const pos,
 auto NucleicView::Quality(std::size_t const pos) const noexcept
     -> std::uint8_t {
   return fetch_quality_impl_(nucleic_acid_, pos);
+}
+
+auto NucleicView::InflateQuality() const -> std::string {
+  return InflateQuality(0, nucleic_acid_->inflated_len);
 }
 
 auto NucleicView::InflateQuality(std::uint32_t const pos,
