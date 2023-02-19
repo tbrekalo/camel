@@ -32,14 +32,14 @@ static auto GetAligner(std::int8_t mismatch, std::int8_t grap_opening,
         wfa::WFAligner::MemoryUltralow);
 
     aligner->setHeuristicWFadaptive(10, 50, 1);
-    aligner->setHeuristicBandedAdaptive(-50, +50, 1);
+    aligner->setHeuristicBandedAdaptive(-10, +10, 1);
     aligner->setHeuristicXDrop(100, 100);
     aligner->setHeuristicZDrop(100, 100);
   }
   return aligner;
 };
 
-[[nodiscard]] auto ExtractSubstrings(
+static auto ExtractSubstrings(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> std::tuple<std::string, std::string> {
   auto const query_view =
@@ -58,13 +58,36 @@ static auto GetAligner(std::int8_t mismatch, std::int8_t grap_opening,
   return {std::move(query_str), std::move(target_str)};
 }
 
+static auto WFAling(std::string& query, std::string& target) -> std::string {
+  auto& aligner = GetAligner(5, 4, 2);
+  aligner->alignEnd2End(query, target);
+  return aligner->getAlignmentCigar();
+}
+
+static auto EdlibALign(std::string_view lhs, std::string_view rhs)
+    -> std::string {
+  auto dst = std::string{};
+  auto edlibRes = edlibAlign(
+      lhs.data(), lhs.length(), rhs.data(), rhs.length(),
+      edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_PATH, nullptr, 0));
+
+  if (edlibRes.status == EDLIB_STATUS_OK) {
+    auto cigar_ptr = std::unique_ptr<char, void (*)(char*)>(
+        edlibAlignmentToCigar(edlibRes.alignment, edlibRes.alignmentLength,
+                              EDLIB_CIGAR_STANDARD),
+        +[](char* chr) -> void { free(chr); });
+    dst = std::string(cigar_ptr.get());
+  }
+
+  edlibFreeAlignResult(edlibRes);
+  return dst;
+}
+
 auto AlignedOverlap(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> biosoup::Overlap {
   auto [query_str, target_str] = ExtractSubstrings(reads, ovlp);
-  auto& aligner = GetAligner(5, 4, 2);
-  aligner->alignEnd2End(query_str, target_str);
-  ovlp.alignment = aligner->getAlignmentCigar();
+  ovlp.alignment = EdlibALign(query_str, target_str);
 
   return ovlp;
 }
