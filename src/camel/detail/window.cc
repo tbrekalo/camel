@@ -44,7 +44,8 @@ static auto MakeWindowIndices(biosoup::Overlap const& ovlp,
       .query_indices = {
           .curr = static_cast<std::int32_t>(
                       ovlp.strand ? ovlp.lhs_begin : query_len - ovlp.lhs_end) -
-                  1}};
+                  1,
+          .active_interval = {kInvalidIndex, kInvalidIndex}}};
 }
 
 static auto IncrementQueryCurr(WindowIndices wi) -> WindowIndices {
@@ -74,7 +75,7 @@ static auto IncrementCurr(WindowIndices wi) -> WindowIndices {
 
 static auto BindFirst(WindowIndices wi) -> WindowIndices {
   wi.query_indices.active_interval.first = wi.query_indices.curr;
-  wi.target_indices.active_interval.first = wi.query_indices.curr;
+  wi.target_indices.active_interval.first = wi.target_indices.curr;
 
   return wi;
 }
@@ -89,7 +90,7 @@ static auto TryBindFirst(WindowIndices wi) -> WindowIndices {
 
 static auto BindLast(WindowIndices wi) -> WindowIndices {
   wi.query_indices.active_interval.last = wi.query_indices.curr + 1;
-  wi.target_indices.active_interval.first = wi.target_indices.curr + 1;
+  wi.target_indices.active_interval.last = wi.target_indices.curr + 1;
 
   return wi;
 }
@@ -121,7 +122,7 @@ static auto MakeAlignedSegment(std::uint32_t const window_first,
     -> std::optional<AlignedSegment> {
   auto quality_sum = 0.0;
   for (auto pos = query_interval.first; pos < query_interval.last; ++pos) {
-    quality_sum += query_view.Quality(pos);
+    quality_sum += query_view.Quality(pos) - 33;
   }
 
   if (auto const quality_avg = quality_sum / IntervalLength(query_interval);
@@ -143,12 +144,11 @@ static auto BindOverlapToWindow(NucleicView query_view,
                                 std::span<ReferenceWindow> windows,
                                 std::uint32_t win_idx,
                                 double const quality_threshold) -> void {
-  auto const& cigar = ovlp.alignment;
+  auto cigar = std::string_view(ovlp.alignment);
   auto indices = MakeWindowIndices(ovlp, query_view.InflatedLenght());
 
-  auto try_update_window = [query_view, windows, quality_threshold](
-                               WindowIndices indices,
-                               std::uint32_t win_idx) -> WindowIndices {
+  auto try_update_window = [&win_idx, query_view, windows, quality_threshold](
+                               WindowIndices indices) -> WindowIndices {
     if (indices.target_indices.curr + 1 != windows[win_idx].interval.last) {
       return indices;
     }
@@ -176,8 +176,7 @@ static auto BindOverlapToWindow(NucleicView query_view,
 
       for (auto k = 0; k < n; ++k) {
         indices =
-            try_update_window(BindLast(TryBindFirst(IncrementCurr(indices))),
-                              windows[win_idx].interval.last);
+            try_update_window(BindLast(TryBindFirst(IncrementCurr(indices))));
       }
     } else if (IsInsertion(cigar[i])) {
       indices = IncrementQueryCurr(indices, std::atoi(&cigar[j]));
@@ -187,8 +186,7 @@ static auto BindOverlapToWindow(NucleicView query_view,
       j = i + 1;
 
       for (auto k = 0; k < n; ++k) {
-        indices = try_update_window(IncrementTargetCurr(indices),
-                                    windows[win_idx].interval.last);
+        indices = try_update_window(IncrementTargetCurr(indices));
       }
     } else if (IsClipOrPad(cigar[i])) {
       j = i + 1;
@@ -265,7 +263,7 @@ auto MakeConsensus(std::string_view backbone_data,
                    std::string_view backbone_quality,
                    ReferenceWindowView ref_window_view, POAConfig poa_cfg)
     -> ConsensusResult {
-  if (ref_window_view.aligned_segments.size() < 3) {
+  if (ref_window_view.aligned_segments.size() < 2) {
     return {.bases = std::string(backbone_data.begin(), backbone_data.end()),
             .is_corrected = false};
   }
