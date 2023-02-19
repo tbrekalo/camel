@@ -62,7 +62,7 @@ static auto CreateConsensus(POAConfig poa_cfg, NucleicView read,
       [poa_cfg, windows, &backbone_data, &fetch_quality,
        &consensuses](std::size_t window_id) -> void {
         auto interval = windows[window_id].interval;
-        consensuses[window_id] = WindowConsensus(
+        consensuses[window_id] = MakeConsensus(
             std::string_view(std::next(backbone_data.cbegin(), interval.first),
                              std::next(backbone_data.cbegin(), interval.last)),
             fetch_quality(interval.first, interval.last),
@@ -145,7 +145,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         ++n_aligned;
         report_state();
 
-        auto windows = detail::CreateWindowsFromAlignments(
+        auto windows = detail::MakePOAWindows(
             reads, overlaps[read_id], correct_cfg.window_cfg,
             coverage_estimate);
 
