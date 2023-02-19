@@ -38,16 +38,15 @@ struct ConsensusResult {
   bool is_corrected;
 };
 
-[[nodiscard]] auto CreateWindowsFromAlignments(
+[[nodiscard]] auto MakePOAWindows(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
-    std::span<biosoup::Overlap const> overlaps,
-    WindowConfig window_cfg,
+    std::span<biosoup::Overlap const> overlaps, WindowConfig window_cfg,
     std::uint32_t const global_coverage_estimate)
     -> std::vector<ReferenceWindow>;
 
 auto ReleaseAlignmentEngines() -> std::size_t;
 
-[[nodiscard]] auto WindowConsensus(std::string_view backbone_data,
+[[nodiscard]] auto MakeConsensus(std::string_view backbone_data,
                                    std::string_view backbone_quality,
                                    ReferenceWindowView, POAConfig poa_cfg)
     -> ConsensusResult;

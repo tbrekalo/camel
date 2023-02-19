@@ -10,7 +10,7 @@
 
 namespace camel::detail {
 
-static constexpr auto kInvalidIndex = std::numeric_limits<uint32_t>::max();
+static constexpr auto kInvalidIndex = std::numeric_limits<uint32_t>::max() - 1U;
 
 static auto AlignmentEngines =
     tbb::enumerable_thread_specific<std::unique_ptr<spoa::AlignmentEngine>>();
@@ -26,99 +26,191 @@ static auto GetAlignmentEngine(POAConfig const config)
   return *engine;
 }
 
+struct ReadWindowIndices {
+  std::int32_t curr;
+  Interval active_interval;
+};
+
+struct WindowIndices {
+  ReadWindowIndices target_indices;
+  ReadWindowIndices query_indices;
+};
+
+static auto MakeWindowIndices(biosoup::Overlap const& ovlp,
+                              std::uint32_t const query_len) -> WindowIndices {
+  return WindowIndices{
+      .target_indices = {.curr = static_cast<std::int32_t>(ovlp.rhs_begin) - 1,
+                         .active_interval = {kInvalidIndex, kInvalidIndex}},
+      .query_indices = {
+          .curr = static_cast<std::int32_t>(
+                      ovlp.strand ? ovlp.lhs_begin : query_len - ovlp.lhs_end) -
+                  1}};
+}
+
+static auto IncrementQueryCurr(WindowIndices wi) -> WindowIndices {
+  ++wi.query_indices.curr;
+  return wi;
+}
+static auto IncrementQueryCurr(WindowIndices wi, std::uint32_t const val)
+    -> WindowIndices {
+  wi.query_indices.curr += val;
+  return wi;
+}
+
+static auto IncrementTargetCurr(WindowIndices wi) -> WindowIndices {
+  ++wi.target_indices.curr;
+  return wi;
+}
+
+static auto IncrementTargetCurr(WindowIndices wi, std::uint32_t const val)
+    -> WindowIndices {
+  wi.target_indices.curr += val;
+  return wi;
+}
+
+static auto IncrementCurr(WindowIndices wi) -> WindowIndices {
+  return IncrementTargetCurr(IncrementQueryCurr(wi));
+}
+
+static auto BindFirst(WindowIndices wi) -> WindowIndices {
+  wi.query_indices.active_interval.first = wi.query_indices.curr;
+  wi.target_indices.active_interval.first = wi.query_indices.curr;
+
+  return wi;
+}
+
+static auto TryBindFirst(WindowIndices wi) -> WindowIndices {
+  if (wi.query_indices.active_interval.first == kInvalidIndex) {
+    return BindFirst(wi);
+  }
+
+  return wi;
+}
+
+static auto BindLast(WindowIndices wi) -> WindowIndices {
+  wi.query_indices.active_interval.last = wi.query_indices.curr + 1;
+  wi.target_indices.active_interval.first = wi.target_indices.curr + 1;
+
+  return wi;
+}
+
+static auto TryBindLast(WindowIndices wi) -> WindowIndices {
+  if (wi.query_indices.active_interval.first != kInvalidIndex) {
+    return BindLast(wi);
+  }
+
+  return wi;
+}
+
+static auto GetWindowIdx(std::span<ReferenceWindow> windows,
+                         std::uint32_t ovlp_start) -> std::uint32_t {
+  return std::distance(
+      windows.begin(),
+      std::upper_bound(windows.begin(), windows.end(), ovlp_start,
+                       [](std::uint32_t const ovlp_start,
+                          ReferenceWindow const& ref_window) -> bool {
+                         return ovlp_start < ref_window.interval.last;
+                       }));
+}
+
+static auto MakeAlignedSegment(std::uint32_t const window_first,
+                               Interval const target_interval,
+                               Interval const query_interval,
+                               NucleicView query_view,
+                               double const quality_threshold)
+    -> std::optional<AlignedSegment> {
+  auto quality_sum = 0.0;
+  for (auto pos = query_interval.first; pos < query_interval.last; ++pos) {
+    quality_sum += query_view.Quality(pos);
+  }
+
+  if (auto const quality_avg = quality_sum / IntervalLength(query_interval);
+      quality_avg < quality_threshold) {
+    return std::nullopt;
+  }
+
+  return AlignedSegment{
+      .alignment_local_interval =
+          LocalizeInterval(window_first, target_interval),
+      .bases = query_view.InflateData(query_interval.first,
+                                      IntervalLength(query_interval)),
+      .quality = query_view.InflateQuality(query_interval.first,
+                                           IntervalLength(query_interval))};
+}
+
+static auto BindOverlapToWindow(NucleicView query_view,
+                                biosoup::Overlap const& ovlp,
+                                std::span<ReferenceWindow> windows,
+                                std::uint32_t win_idx,
+                                double const quality_threshold) -> void {
+  auto const& cigar = ovlp.alignment;
+  auto indices = MakeWindowIndices(ovlp, query_view.InflatedLenght());
+
+  auto try_update_window = [query_view, windows, quality_threshold](
+                               WindowIndices indices,
+                               std::uint32_t win_idx) -> WindowIndices {
+    if (indices.target_indices.curr + 1 != windows[win_idx].interval.last) {
+      return indices;
+    }
+
+    if (auto opt_segment =
+            MakeAlignedSegment(windows[win_idx].interval.first,
+                               indices.target_indices.active_interval,
+                               indices.query_indices.active_interval,
+                               query_view, quality_threshold);
+        opt_segment) {
+      windows[win_idx].aligned_segments.push_back(*opt_segment);
+    };
+
+    indices.query_indices.active_interval = {kInvalidIndex, kInvalidIndex};
+    indices.target_indices.active_interval = {kInvalidIndex, kInvalidIndex};
+    ++win_idx;
+
+    return indices;
+  };
+
+  for (auto j = 0U, i = 0U; i < cigar.size(); ++i) {
+    if (IsMisOrMatch(cigar[i])) {
+      auto const n = std::atoi(&cigar[j]);
+      j = i + 1;
+
+      for (auto k = 0; k < n; ++k) {
+        indices =
+            try_update_window(BindLast(TryBindFirst(IncrementCurr(indices))),
+                              windows[win_idx].interval.last);
+      }
+    } else if (IsInsertion(cigar[i])) {
+      indices = IncrementQueryCurr(indices, std::atoi(&cigar[j]));
+      j = i + 1;
+    } else if (IsDeletion(cigar[i])) {
+      auto const n = std::atoi(&cigar[j]);
+      j = i + 1;
+
+      for (auto k = 0; k < n; ++k) {
+        indices = try_update_window(IncrementTargetCurr(indices),
+                                    windows[win_idx].interval.last);
+      }
+    } else if (IsClipOrPad(cigar[i])) {
+      j = i + 1;
+    }
+  }
+}
+
 static auto BindReadSegmentsToWindows(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps,
-    std::span<ReferenceWindow> windows, double quality_threshold) -> void {
+    std::span<ReferenceWindow> windows, double const quality_threshold)
+    -> void {
   for (auto ovlp_idx = 0U; ovlp_idx < overlaps.size(); ++ovlp_idx) {
-    auto win_idx = std::distance(
-        windows.begin(),
-        std::upper_bound(windows.begin(), windows.end(),
-                         overlaps[ovlp_idx].rhs_begin,
-                         [](std::uint32_t const ovlp_start,
-                            ReferenceWindow const& ref_window) -> bool {
-                           return ovlp_start < ref_window.interval.last;
-                         }));
-
+    auto win_idx = GetWindowIdx(windows, overlaps[ovlp_idx].rhs_begin);
     if (win_idx >= windows.size()) {
       continue;
     }
 
-    auto const& cigar = overlaps[ovlp_idx].alignment;
-    auto const query_view = NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
-                                        !overlaps[ovlp_idx].strand);
-
-    auto query_first = kInvalidIndex, target_first = kInvalidIndex;
-    auto query_last = query_first, target_last = target_first;
-
-    auto query_curr = (overlaps[ovlp_idx].strand
-                           ? overlaps[ovlp_idx].lhs_begin
-                           : reads[overlaps[ovlp_idx].lhs_id]->inflated_len -
-                                 overlaps[ovlp_idx].lhs_end) -
-                      1;
-    auto target_curr = overlaps[ovlp_idx].rhs_begin - 1;
-
-    auto const update_window = [&]() {
-      if (target_first != kInvalidIndex) {
-        auto quality_sum = 0.0;
-        for (auto pos = query_first; pos < query_last; ++pos) {
-          quality_sum += query_view.Quality(pos) - 33;
-        }
-
-        if (quality_sum / (query_last - query_first) > quality_threshold) {
-          windows[win_idx].aligned_segments.emplace_back(AlignedSegment{
-              .alignment_local_interval = LocalizeInterval(
-                  windows[win_idx].interval.first, {target_first, target_last}),
-              .bases =
-                  query_view.InflateData(query_first, query_last - query_first),
-              .quality = query_view.InflateQuality(query_first,
-                                                   query_last - query_first)});
-        }
-      }
-
-      query_first = target_first = kInvalidIndex;
-      return ++win_idx == windows.size();
-    };
-
-    auto windowsTraversed = false;
-    for (auto j = 0U, i = 0U; i < cigar.size() && !windowsTraversed; ++i) {
-      if (IsMisOrMatch(cigar[i])) {
-        auto const n = std::atoi(&cigar[j]);
-        for (auto k = 0; k < n && !windowsTraversed; ++k) {
-          ++query_curr;
-          ++target_curr;
-          if (target_first == kInvalidIndex) {
-            query_first = query_curr;
-            target_first = target_curr;
-          }
-
-          query_last = query_curr + 1;
-          target_last = target_curr + 1;
-
-          if (target_curr + 1 == windows[win_idx].interval.last) {
-            windowsTraversed = update_window();
-          }
-        }
-        j = i + 1;
-      } else if (IsInsertion(cigar[i])) {
-        query_curr += std::atoi(&cigar[j]);
-        j = i + 1;
-      } else if (IsDeletion(cigar[i])) {
-        auto const n = std::atoi(&cigar[j]);
-        for (auto k = 0; k < n && !windowsTraversed; ++k) {
-          ++target_curr;
-          if (target_first != kInvalidIndex) {
-            target_last = target_curr;
-            if (target_curr == windows[win_idx].interval.last) {
-              windowsTraversed = update_window();
-            }
-          }
-        }
-        j = i + 1;
-      } else if (IsClipOrPad(cigar[i])) {
-        j = i + 1;
-      }
-    }
+    BindOverlapToWindow(NucleicView(reads[overlaps[ovlp_idx].lhs_id].get(),
+                                    !overlaps[ovlp_idx].strand),
+                        overlaps[ovlp_idx], windows, win_idx,
+                        quality_threshold);
   }
 
   for (auto& win : windows) {
@@ -145,7 +237,7 @@ auto FindWindows(NucleicView read_view,
   return dst;
 }
 
-auto CreateWindowsFromAlignments(
+auto MakePOAWindows(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     std::span<biosoup::Overlap const> overlaps, WindowConfig window_cfg,
     std::uint32_t const global_coverage_estimate)
@@ -169,9 +261,9 @@ auto ReleaseAlignmentEngines() -> std::size_t {
   return dst;
 }
 
-auto WindowConsensus(std::string_view backbone_data,
-                     std::string_view backbone_quality,
-                     ReferenceWindowView ref_window_view, POAConfig poa_cfg)
+auto MakeConsensus(std::string_view backbone_data,
+                   std::string_view backbone_quality,
+                   ReferenceWindowView ref_window_view, POAConfig poa_cfg)
     -> ConsensusResult {
   if (ref_window_view.aligned_segments.size() < 3) {
     return {.bases = std::string(backbone_data.begin(), backbone_data.end()),
