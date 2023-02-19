@@ -10,6 +10,10 @@
 
 namespace camel::detail {
 
+static auto constexpr kWinPadding = 13U;
+static auto constexpr kAllowedFuzzPercent = 0.01;
+static auto constexpr kSmallWindowPercent = 0.05;
+
 static constexpr auto kInvalidIndex = std::numeric_limits<uint32_t>::max() - 1U;
 
 static auto AlignmentEngines =
