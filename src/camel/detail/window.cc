@@ -124,6 +124,11 @@ static auto MakeAlignedSegment(std::uint32_t const window_first,
                                NucleicView query_view,
                                double const quality_threshold)
     -> std::optional<AlignedSegment> {
+  if (target_interval == Interval{kInvalidIndex, kInvalidIndex} ||
+      query_interval == Interval{kInvalidIndex, kInvalidIndex}) {
+    return std::nullopt;
+  }
+
   auto quality_sum = 0.0;
   for (auto pos = query_interval.first; pos < query_interval.last; ++pos) {
     quality_sum += query_view.Quality(pos) - 33;
