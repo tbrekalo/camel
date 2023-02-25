@@ -64,7 +64,7 @@ static auto WFAling(std::string& query, std::string& target) -> std::string {
   return aligner->getAlignmentCigar();
 }
 
-static auto EdlibALign(std::string_view lhs, std::string_view rhs)
+static auto EdlibAlign(std::string_view lhs, std::string_view rhs)
     -> std::string {
   auto dst = std::string{};
   auto edlibRes = edlibAlign(
@@ -87,7 +87,7 @@ auto AlignedOverlap(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
     biosoup::Overlap ovlp) -> biosoup::Overlap {
   auto [query_str, target_str] = ExtractSubstrings(reads, ovlp);
-  ovlp.alignment = EdlibALign(query_str, target_str);
+  ovlp.alignment = EdlibAlign(query_str, target_str);
 
   return ovlp;
 }
