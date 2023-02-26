@@ -157,8 +157,10 @@ static auto BindOverlapToWindow(NucleicView query_view,
   auto indices = MakeWindowIndices(ovlp, query_view.InflatedLenght());
 
   auto try_update_window = [&win_idx, query_view, windows, quality_threshold](
-                               WindowIndices indices) -> WindowIndices {
-    if (indices.target_indices.curr + 1 != windows[win_idx].interval.last) {
+                               WindowIndices indices,
+                               bool force_update) -> WindowIndices {
+    if (!force_update &&
+        indices.target_indices.curr + 1 != windows[win_idx].interval.last) {
       return indices;
     }
 
@@ -185,7 +187,8 @@ static auto BindOverlapToWindow(NucleicView query_view,
 
       for (auto k = 0; k < n; ++k) {
         indices =
-            try_update_window(BindLast(TryBindFirst(IncrementCurr(indices))));
+            try_update_window(BindLast(TryBindFirst(IncrementCurr(indices))),
+                              i + 1 == cigar.size() && k + 1 == n);
       }
     } else if (IsInsertion(cigar[i])) {
       indices = IncrementQueryCurr(indices, std::atoi(&cigar[j]));
@@ -195,7 +198,8 @@ static auto BindOverlapToWindow(NucleicView query_view,
       j = i + 1;
 
       for (auto k = 0; k < n; ++k) {
-        indices = try_update_window(IncrementTargetCurr(indices));
+        indices = try_update_window(IncrementTargetCurr(indices),
+                                    i + 1 == cigar.size() && k + 1 == n);
       }
     } else if (IsClipOrPad(cigar[i])) {
       j = i + 1;

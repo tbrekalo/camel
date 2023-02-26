@@ -1,21 +1,53 @@
 #include "camel/correct.h"
 
-#include <array>
-#include <functional>
-#include <iterator>
-#include <numeric>
-#include <random>
-#include <variant>
+#include <tsl/robin_map.h>
+
+#include <optional>
 
 #include "biosoup/timer.hpp"
 #include "detail/coverage.h"
+#include "detail/nucleic_view.h"
+#include "detail/overlap.h"
 #include "detail/window.h"
 #include "fmt/core.h"
 #include "tbb/parallel_for.h"
+#include "tsl/robin_set.h"
 
 namespace camel {
 
 namespace detail {
+
+struct Containment {
+  biosoup::Overlap ovlp;
+  double score;
+};
+
+static auto ReduceContained(
+    std::span<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    std::vector<biosoup::Overlap> overlaps) -> std::vector<biosoup::Overlap> {
+  auto repr = std::optional<Containment>();
+  for (auto const& ovlp : overlaps) {
+    auto const ovlp_type =
+        DetermineOverlapType(ovlp, reads[ovlp.lhs_id]->inflated_len,
+                             reads[ovlp.rhs_id]->inflated_len);
+
+    if (ovlp_type == OverlapType::kRhsContained) {
+      auto const score = OverlapScore(ovlp);
+      if (repr && repr->score < score) {
+        repr->ovlp = ovlp;
+        repr->score = score;
+      } else {
+        repr = Containment{.ovlp = ovlp, .score = score};
+      }
+    }
+  }
+
+  if (repr) {
+    return {repr->ovlp};
+  }
+
+  return overlaps;
+}
 
 static auto GetTargetIds(
     std::span<std::unique_ptr<biosoup::NucleicAcid> const> reads,
@@ -23,7 +55,7 @@ static auto GetTargetIds(
     -> std::vector<std::size_t> {
   auto dst = std::vector<std::size_t>();
   for (auto i = 0U; i < overlaps.size(); ++i) {
-    if (!overlaps[i].empty()) {
+    if (overlaps[i].size() > 1) {
       dst.push_back(i);
     }
   }
@@ -87,13 +119,73 @@ static auto CreateConsensus(POAConfig poa_cfg, NucleicView read,
       static_cast<double>(consensuses.size());
 
   /* clang-format off */
-          std::string consensus_name =
-              fmt::format("{} LN:i:{} RC:i:{} XC:f:{:5.2f}",
-                  read.Name(),
-                          consensus.size(), windows.size(), polished_ratio);
+  std::string consensus_name =
+    fmt::format("{} LN:i:{} RC:i:{} XC:f:{:5.2f}",
+      read.Name(),
+        consensus.size(), windows.size(), polished_ratio);
   /* clang-format on */
 
   return std::make_unique<biosoup::NucleicAcid>(consensus_name, consensus);
+}
+
+static auto ReconstructContained(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> reads,
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> dst,
+    std::vector<std::vector<biosoup::Overlap>> overlaps)
+    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
+  auto const reconstruct = [&](std::uint32_t const read_idx) -> void {
+    auto visited = tsl::robin_set<std::uint32_t>{read_idx};
+    auto stack = std::vector<std::uint32_t>{read_idx};
+
+    auto const push = [&visited, &stack](std::uint32_t const idx) -> void {
+      visited.insert(idx);
+      stack.push_back(idx);
+    };
+
+    auto const pop = [&visited, &stack]() -> void { stack.pop_back(); };
+
+    while (!stack.empty()) {
+      auto curr_idx = stack.back();
+      auto ovlp = overlaps[curr_idx].front();
+      if (dst[ovlp.lhs_id] == nullptr) {
+        if (visited.count(ovlp.lhs_id) == 0 && !overlaps[ovlp.lhs_id].empty()) {
+          push(ovlp.lhs_id);
+          continue;
+        }
+
+        pop();
+        continue;
+      }
+
+      ovlp.lhs_end = std::min(dst[ovlp.lhs_id]->inflated_len, ovlp.lhs_end);
+
+      auto const ovlp_len = ovlp.lhs_end - ovlp.lhs_begin;
+      auto const lhs_begin =
+          ovlp.strand ? ovlp.lhs_begin
+                      : dst[ovlp.lhs_id]->inflated_len - ovlp.lhs_end;
+      auto const ref_view =
+          detail::NucleicView(dst[ovlp.lhs_id].get(),
+                              /* is_reverse_complement = */ !ovlp.strand);
+
+      dst[ovlp.rhs_id] = std::make_unique<biosoup::NucleicAcid>(
+          reads[curr_idx]->name, ref_view.InflateData(lhs_begin, ovlp_len));
+
+      pop();
+    }
+  };
+
+  for (auto idx = 0UL; idx < overlaps.size(); ++idx) {
+    if (dst[idx] == nullptr && overlaps[idx].size() == 1) {
+      reconstruct(idx);
+    }
+  }
+
+  std::erase_if(dst,
+                [](std::unique_ptr<biosoup::NucleicAcid> const& read) -> bool {
+                  return read == nullptr;
+                });
+
+  return dst;
 }
 
 }  // namespace detail
@@ -102,7 +194,7 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
                   std::vector<std::unique_ptr<biosoup::NucleicAcid>> reads,
                   std::vector<std::vector<biosoup::Overlap>> overlaps)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
-  auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
+  auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>(reads.size());
   auto function_timer = biosoup::Timer();
 
   function_timer.Start();
@@ -111,6 +203,11 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
              function_timer.Stop(), coverage_estimate);
 
   function_timer.Start();
+  tbb::parallel_for(std::size_t(0), overlaps.size(),
+                    [&reads, &overlaps](std::size_t const idx) -> void {
+                      overlaps[idx] = detail::ReduceContained(
+                          reads, std::move(overlaps[idx]));
+                    });
 
   auto const target_ids = detail::GetTargetIds(reads, overlaps);
   auto const n_targets = target_ids.size();
@@ -135,7 +232,9 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
     }
   };
 
-  dst.resize(n_targets);
+  for (auto const& read_id : target_ids) {
+    dst[read_id] = nullptr;
+  }
 
   function_timer.Start();
   tbb::parallel_for(
@@ -145,11 +244,11 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
         ++n_aligned;
         report_state();
 
-        auto windows = detail::MakePOAWindows(
-            reads, overlaps[read_id], correct_cfg.window_cfg,
-            coverage_estimate);
+        auto windows =
+            detail::MakePOAWindows(reads, overlaps[read_id],
+                                   correct_cfg.window_cfg, coverage_estimate);
 
-        dst[target_idx] = detail::CreateConsensus(
+        dst[read_id] = detail::CreateConsensus(
             correct_cfg.poa_cfg,
             detail::NucleicView(reads[read_id].get(), false), windows);
 
@@ -167,7 +266,9 @@ auto ErrorCorrect(CorrectConfig const correct_cfg,
   function_timer.Stop();
   fmt::print(stderr, "[camel::ErrorCorrect]({:12.3f})\n",
              function_timer.elapsed_time());
-  return dst;
+
+  return detail::ReconstructContained(std::move(reads), std::move(dst),
+                                      std::move(overlaps));
 }
 
 }  // namespace camel
