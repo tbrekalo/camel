@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.17)
 project(
   camel
-  VERSION 0.8.1
+  VERSION 0.9.0
   LANGUAGES CXX
   DESCRIPTION "Read polishing tool")
 
@@ -64,7 +64,7 @@ if(CAMEL_BUILD_SHARED_LIBS)
   set(BUILD_SHARED_LIBS ON)
 endif()
 
-set(CAMEL_CONAN_DEPS cxxopts/3.0.0 fmt/8.1.1 tbb/2020.3 tsl-robin-map/1.0.1)
+set(CAMEL_CONAN_DEPS cxxopts/3.0.0 fmt/8.1.1 tbb/2020.3)
 
 message(STATUS "[camel] conan deps: ${CAMEL_CONAN_DEPS}")
 conan_cmake_configure(REQUIRES ${CAMEL_CONAN_DEPS} GENERATORS

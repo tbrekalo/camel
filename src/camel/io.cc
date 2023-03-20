@@ -1,14 +1,7 @@
 #include "camel/io.h"
 
-#include <array>
 #include <fstream>
-#include <functional>
-#include <future>
-#include <iterator>
-#include <limits>
-#include <numeric>
-#include <stdexcept>
-#include <string_view>
+#include <unordered_map>
 
 #include "bioparser/fasta_parser.hpp"
 #include "bioparser/fastq_parser.hpp"
@@ -20,7 +13,6 @@
 #include "tbb/parallel_for_each.h"
 #include "tbb/parallel_sort.h"
 #include "tbb/task_group.h"
-#include "tsl/robin_map.h"
 
 namespace camel {
 
@@ -200,7 +192,7 @@ auto LoadOverlaps(
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto dst = std::vector<std::vector<biosoup::Overlap>>(reads.size());
   auto name_to_id =
-      tsl::robin_map<std::string_view, std::uint32_t>(reads.size());
+      std::unordered_map<std::string_view, std::uint32_t>(reads.size());
 
   for (auto const& read : reads) {
     name_to_id[read->name] = read->id;
