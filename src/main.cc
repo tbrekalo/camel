@@ -20,13 +20,12 @@
 std::atomic<std::uint32_t> biosoup::NucleicAcid::num_objects(0);
 
 auto main(int argc, char** argv) -> int {
-  auto options =
-      cxxopts::Options("camel", "Camel is haplotype aware detection tool");
+  auto options = cxxopts::Options("camel", "Camel is a read correction tool");
 
   /* clang-format off */
   options.add_options("serialization arguments")
-    ("o,out", "output destination folder for reads.fa",
-      cxxopts::value<std::string>()->default_value("./"));
+    ("o,out", "path to output file",
+      cxxopts::value<std::string>()->default_value("./camel_reads.fa"));
   options.add_options("correction arguments")
     ("n,n-overlaps", "number of overlaps per read to keep",
       cxxopts::value<std::size_t>()->default_value("64"))
@@ -50,13 +49,15 @@ auto main(int argc, char** argv) -> int {
             cxxopts::value<std::string>())
     ("overlaps", "overlaps path", 
             cxxopts::value<std::string>());
+  options.positional_help("<reads_path> <overlaps_path>");
   options.add_options("info")
     ("h,help", "print help")
     ("v,version", "print version and exit");
-  options.parse_positional({"reads", "overlaps"});
   /* clang-format on */
 
   try {
+    options.show_positional_help();
+    options.parse_positional({"reads", "overlaps"});
     auto const result = options.parse(argc, argv);
     if (result.count("help")) {
       fmt::print(stderr, "{}", options.help());

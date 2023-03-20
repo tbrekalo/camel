@@ -147,14 +147,13 @@ auto LoadSequences(std::filesystem::path const& path)
 
 auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
-    std::filesystem::path const& dst_folder) -> void {
+    std::filesystem::path const& dst_file) -> void {
   if (seqs.empty()) {
     return;
   }
 
-  auto const dst_file_path = dst_folder / "camel_reads.fa";
   auto ofstrm =
-      std::fstream(dst_file_path, std::ios_base::out | std::ios_base::trunc);
+      std::fstream(dst_file, std::ios_base::out | std::ios_base::trunc);
   for (auto const& seq : seqs) {
     ofstrm << '>' << seq->name << '\n' << seq->InflateData() << '\n';
   }

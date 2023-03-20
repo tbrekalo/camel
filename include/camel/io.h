@@ -14,36 +14,17 @@
 
 namespace camel {
 
-/**
- * @brief load sequences from single fasta/fastq file
- *
- * @return loaded fasta/fastq sequences sorted and indexed by sequence name
- *
- */
-CAMEL_EXPORT [[nodiscard]] auto LoadSequences(std::filesystem::path const& path)
+CAMEL_EXPORT auto LoadSequences(std::filesystem::path const& path)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
-/**
- * @brief multithreaded sequence loading from multiple fasta/fastq files
- *
- * @return loaded fasta/fastq sequences sorted and indexed by sequence name
- *
- */
-CAMEL_EXPORT [[nodiscard]] auto LoadSequences(
-    std::vector<std::filesystem::path> const& paths)
+CAMEL_EXPORT auto LoadSequences(std::vector<std::filesystem::path> const& paths)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
-/**
- * @brief multithreaded sequence storage
- */
 CAMEL_EXPORT auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_file) -> void;
 
-/**
- * @brief loads overlaps, keeps the best one for each read
- */
-CAMEL_EXPORT [[nodiscard]] auto LoadOverlaps(
+CAMEL_EXPORT auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
     double const error_threshold, std::size_t const n_overlaps)
