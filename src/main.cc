@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <iostream>
 
 #include "biosoup/timer.hpp"
 #include "camel/correct.h"
@@ -23,9 +24,6 @@ auto main(int argc, char** argv) -> int {
   auto options = cxxopts::Options("camel", "Camel is a read correction tool");
 
   /* clang-format off */
-  options.add_options("serialization arguments")
-    ("o,out", "path to output file",
-      cxxopts::value<std::string>()->default_value("./camel_reads.fa"));
   options.add_options("correction arguments")
     ("n,n-overlaps", "number of overlaps per read to keep",
       cxxopts::value<std::size_t>()->default_value("64"))
@@ -75,8 +73,6 @@ auto main(int argc, char** argv) -> int {
     /* clang-format on */
 
     auto const n_threads = result["threads"].as<std::uint32_t>();
-    auto const out_path =
-        std::filesystem::path(result["out"].as<std::string>());
 
     auto task_arena = tbb::task_arena(n_threads);
     auto reads_path = std::filesystem::path(result["reads"].as<std::string>());
@@ -112,7 +108,7 @@ auto main(int argc, char** argv) -> int {
       task_arena.execute([&]() -> void {
         auto corrected_reads = camel::ErrorCorrect(
             correct_cfg, std::move(reads), std::move(overlaps));
-        camel::StoreSequences(corrected_reads, out_path);
+        camel::SerializeSequences(corrected_reads, std::cout);
       });
       timer.Stop();
       fmt::print(stderr, "[camel]({:12.3f}) done\n", timer.elapsed_time());

@@ -154,6 +154,12 @@ auto StoreSequences(
 
   auto ofstrm =
       std::fstream(dst_file, std::ios_base::out | std::ios_base::trunc);
+  SerializeSequences(seqs, ofstrm);
+}
+
+CAMEL_EXPORT auto SerializeSequences(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::ostream& ofstrm) -> void {
   for (auto const& seq : seqs) {
     ofstrm << '>' << seq->name << '\n' << seq->InflateData() << '\n';
   }

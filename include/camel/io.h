@@ -24,6 +24,10 @@ CAMEL_EXPORT auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_file) -> void;
 
+CAMEL_EXPORT auto SerializeSequences(
+    std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
+    std::ostream& ostream) -> void;
+
 CAMEL_EXPORT auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
