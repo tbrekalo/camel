@@ -61,7 +61,7 @@ try:
         f.write(TaskInfo(
             task_config=task_cfg,
             task_run=monitored_run(runtime_dir_path, task_cfg),
-        ).json())
+        ).json(by_alias=True))
 
 except Exception as e:
     print(e, file=sys.stderr)
