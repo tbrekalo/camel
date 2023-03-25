@@ -20,13 +20,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '-r', '--reference',
-    help='reference reads',
-    type=str,
-    required=True,
-)
-
-parser.add_argument(
     '-o', '--output',
     help='output folder containing runtime information',
     type=str,
@@ -36,13 +29,6 @@ parser.add_argument(
 try:
     args = parser.parse_args()
     task_cfg = TaskConfig.parse_file(args.config)
-
-    ref_path = pathlib.Path(args.reference)
-    if not ref_path.exists():
-        raise ReferenceNotFound(
-            args.reference,
-            "could not find reference on the disk"
-        )
 
     output_dir = pathlib.Path(args.output)
     if not output_dir.exists():
