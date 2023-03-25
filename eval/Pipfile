@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+polars = "*"
+seaborn = "*"
+psutil = "*"
+pydantic = {extras = ["dotenv"], version = "*"}
+mappy = "*"
+edlib = "*"
+
+[dev-packages]
+mypy = "*"
+pyright = "*"
+pylint = "*"
+isort = "*"
+pyline = "*"
+autopep8 = "*"
+
+[requires]
+python_version = "3.11"
