@@ -26,7 +26,8 @@ def format_camel_args(task_cfg: TaskConfig) -> List[str]:
 
 def format_racon_args(task_cfg: TaskConfig) -> List[str]:
     return format_camel_args(task_cfg) + [
-        str(task_cfg.reads_path)
+        str(task_cfg.reads_path),
+        '-f'
     ]
 
 
