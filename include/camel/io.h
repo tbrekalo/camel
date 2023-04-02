@@ -17,9 +17,6 @@ namespace camel {
 CAMEL_EXPORT auto LoadSequences(std::filesystem::path const& path)
     -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
 
-CAMEL_EXPORT auto LoadSequences(std::vector<std::filesystem::path> const& paths)
-    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>>;
-
 CAMEL_EXPORT auto StoreSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::filesystem::path const& dst_file) -> void;
@@ -31,8 +28,7 @@ CAMEL_EXPORT auto SerializeSequences(
 CAMEL_EXPORT auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    double const error_threshold, std::size_t const n_overlaps)
-    -> std::vector<std::vector<biosoup::Overlap>>;
+    double const error_threshold) -> std::vector<std::vector<biosoup::Overlap>>;
 
 }  // namespace camel
 

@@ -157,7 +157,7 @@ auto StoreSequences(
   SerializeSequences(seqs, ofstrm);
 }
 
-CAMEL_EXPORT auto SerializeSequences(
+auto SerializeSequences(
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& seqs,
     std::ostream& ofstrm) -> void {
   for (auto const& seq : seqs) {
@@ -165,35 +165,10 @@ CAMEL_EXPORT auto SerializeSequences(
   }
 }
 
-auto LoadSequences(std::vector<std::filesystem::path> const& paths)
-    -> std::vector<std::unique_ptr<biosoup::NucleicAcid>> {
-  auto buff_vec =
-      tbb::concurrent_vector<std::unique_ptr<biosoup::NucleicAcid>>();
-  auto dst = std::vector<std::unique_ptr<biosoup::NucleicAcid>>();
-
-  tbb::parallel_for_each(
-      paths, [&buff_vec](std::filesystem::path const& path) -> void {
-        for (auto& seq : LoadSequences(path)) {
-          buff_vec.push_back(std::move(seq));
-        }
-      });
-
-  // reindexing
-  tbb::parallel_sort(buff_vec, detail::CmpNucleicAcidByName);
-  tbb::parallel_for(
-      0U, static_cast<std::uint32_t>(buff_vec.size()),
-      [&](std::uint32_t idx) -> void { buff_vec[idx]->id = idx; });
-
-  dst.reserve(buff_vec.size());
-  std::move(buff_vec.begin(), buff_vec.end(), std::back_inserter(dst));
-
-  return dst;
-}
-
 auto LoadOverlaps(
     std::filesystem::path const& paf_path,
     std::vector<std::unique_ptr<biosoup::NucleicAcid>> const& reads,
-    double const error_threshold, std::size_t const n_overlaps)
+    double const error_threshold)
     -> std::vector<std::vector<biosoup::Overlap>> {
   auto dst = std::vector<std::vector<biosoup::Overlap>>(reads.size());
   auto name_to_id =
