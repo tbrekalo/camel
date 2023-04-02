@@ -1,6 +1,7 @@
 import re
+from typing import List
 
-from pydantic import BaseModel, FilePath, validator
+from pydantic import BaseModel, Field, FilePath, validator
 
 from task.exceptions import (TaskConfigInvalidErrorThreshold,
                              TaskConfigInvalidExeError, TaskRunInvalidValue)
@@ -47,6 +48,8 @@ class TaskConfig(BaseConfig):
 class TaskRun(BaseConfig):
     peak_memory_mib: float
     runtime_s: float
+    reads: FilePath
+    accuracies: List[float] = Field(default=[])
 
     @validator('peak_memory_mib')
     @classmethod

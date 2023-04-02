@@ -1,8 +1,10 @@
-from pathlib import Path
+import subprocess
 from time import perf_counter
 from typing import List
 
+import pysam
 from psutil import Popen
+from pydantic import DirectoryPath, FilePath
 
 from task.schemas import TaskConfig, TaskRun
 
@@ -37,7 +39,51 @@ def create_spawn_list(task_cfg: TaskConfig) -> List[str]:
     return format_racon_args(task_cfg)
 
 
-def monitored_run(output_dir: Path, task_cfg: TaskConfig) -> TaskRun:
+def format_minimap_args(
+        ref_path: FilePath,
+        reads_path: FilePath,
+        threads: int) -> List[str]:
+    return [
+        'minimap2',
+        '-ax', 'map-ont',
+        str(ref_path), str(reads_path),
+        '-t', str(threads)
+    ]
+
+
+def run_minimap(
+        output_dir: DirectoryPath,
+        ref_path: FilePath,
+        reads_path: FilePath,
+        threads: int) -> FilePath:
+    sam_path = output_dir.joinpath('alignment.sam')
+    with open(sam_path, 'w+') as f:
+        subprocess.call(
+            format_minimap_args(
+                ref_path, reads_path, threads
+            ),
+            stdout=f
+        )
+
+    return sam_path
+
+
+def calculate_accuracies(sam_path: FilePath):
+    dst = []
+    with pysam.AlignmentFile(str(sam_path)) as sam:
+        for r in sam.fetch(until_eof=True):
+            stats = r.get_cigar_stats()[0][0:4]
+            if sum(stats) > 0:
+                dst.append(stats[0] / sum(stats))
+
+    return dst
+
+
+def monitored_run(
+        output_dir: DirectoryPath,
+        ref_path: FilePath,
+        threads: int,
+        task_cfg: TaskConfig) -> TaskRun:
     reads_path = output_dir.joinpath('reads.fa')
     with open(reads_path, 'w+') as f:
         with Popen(create_spawn_list(task_cfg), stdout=f) as proc:
@@ -54,6 +100,10 @@ def monitored_run(output_dir: Path, task_cfg: TaskConfig) -> TaskRun:
     ret = TaskRun(
         peak_memory_mib=peak_memory / (2 ** 20),
         runtime_s=time_end - time_begin,
+        reads=reads_path,
+        accuracies=calculate_accuracies(
+            run_minimap(output_dir, ref_path, reads_path, threads)
+        )
     )
 
     return ret

@@ -20,33 +20,48 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    '-r', '--reference',
+    help='reference reads',
+    type=str,
+    required=True,
+)
+
+parser.add_argument(
     '-o', '--output',
     help='output folder containing runtime information',
     type=str,
     required=True,
 )
 
+parser.add_argument(
+    '-t', '--threads',
+    help='nmber of threads used for evaluation',
+    type=int,
+    default=1,
+)
+
 try:
     args = parser.parse_args()
     task_cfg = TaskConfig.parse_file(args.config)
+
+    ref_path = pathlib.Path(args.reference)
+    if not ref_path.exists():
+        raise ReferenceNotFound(
+            args.reference,
+            "could not find reference on the disk"
+        )
 
     output_dir = pathlib.Path(args.output)
     if not output_dir.exists():
         print('creating output dir', file=sys.stderr)
         output_dir.mkdir()
 
-    runtime_dir_path = output_dir.joinpath(
-        '{}_{}'.format(
-            task_cfg.exe,
-            datetime.now().strftime('%y-%m-%d_%H-%M')
-        )
-    )
-
-    runtime_dir_path.mkdir()
-    with open(runtime_dir_path.joinpath('info.json'), 'w+') as f:
+    threads = args.threads
+    with open(output_dir.joinpath('info.json'), 'w+') as f:
         f.write(TaskInfo(
             task_config=task_cfg,
-            task_run=monitored_run(runtime_dir_path, task_cfg),
+            task_run=monitored_run(
+                output_dir, ref_path, threads, task_cfg),
         ).json(by_alias=True))
 
 except Exception as e:
