@@ -3,7 +3,7 @@
 This folder contains scripts for evaluating read correction tools, racon and camel. `src/main.py` is the main entry point.
 
 ```bash
-usage: evaluation [-h] -r REFERENCE -o OUTPUT config
+usage: evaluation [-h] -r REFERENCE -o OUTPUT [-t THREADS] config
 
 evaluate read correction tool
 
@@ -12,8 +12,12 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  -r REFERENCE, --reference REFERENCE
+                        reference reads
   -o OUTPUT, --output OUTPUT
                         output folder containing runtime information
+  -t THREADS, --threads THREADS
+                        nmber of threads used for evaluation
 ```
 
 `base_job.json` is a template for creating json job descriptions. `example_run.bash` illustrates iterating over sample data with different job configurations.
@@ -24,6 +28,7 @@ options:
 exes=(camel racon)
 threads=(64 32 16)
 window_lengths=(200 500)
+base_out_dir=evaluations/
 
 reads=(
   yeast_sim/diploid_sim/reads.fa
@@ -50,11 +55,19 @@ do
       --arg op ${overlaps[$i]} \
       '.exe=$e | .readsPath=$rp | .overlapsPath=$op')
 
+      run_name=$exe\_$(date +"%Y-%m-%d_%H-%M-%S")
+      run_dir=$base_out_dir/$run_name
+
+      echo $run_dir
+      mkdir $run_dir
+
     echo $job_desc | jq ''
-    python src/main.py <(echo $job_desc) -o evaluations/
+    python src/main.py <(echo $job_desc) \
+      -r ${references[$i]} \
+      -o $run_dir \
+      -t 32
   done
 done
-
 ```
 
 Each run generates a directory with benchmarks along with corrected sequences.
@@ -80,7 +93,8 @@ info.json
   },
   "taskRun": {
     "peakMemoryMib": 43.03,
-    "runtimeS": 0.18
+    "runtimeS": 0.18,
+    "accuracies": [0.99, 0.97, ...]
   }
 }
 ```

@@ -3,6 +3,7 @@
 exes=(camel racon)
 threads=(64 32 16)
 window_lengths=(200 500)
+base_out_dir=evaluations/
 
 reads=(
   yeast_sim/diploid_sim/reads.fa
@@ -29,7 +30,16 @@ do
       --arg op ${overlaps[$i]} \
       '.exe=$e | .readsPath=$rp | .overlapsPath=$op')
 
+      run_name=$exe\_$(date +"%Y-%m-%d_%H-%M-%S")
+      run_dir=$base_out_dir/$run_name
+
+      echo $run_dir
+      mkdir $run_dir
+
     echo $job_desc | jq ''
-    python src/main.py <(echo $job_desc) -o evaluations/
+    python src/main.py <(echo $job_desc) \
+      -r ${references[$i]} \
+      -o $run_dir \
+      -t 32
   done
 done
